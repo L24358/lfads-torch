@@ -1,0 +1,11 @@
+SMA5
+  encod_data_dim: 16
+  encod_seq_len: 100
+  recon_seq_len: 100
+  ext_input_dim: 0
+
+FMN
+  encod_data_dim: 16
+  encod_seq_len: 100
+  recon_seq_len: 100
+  ext_input_dim: 0

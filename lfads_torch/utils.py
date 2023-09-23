@@ -1,5 +1,6 @@
 import torch
 
+from typing import List
 from .tuples import SessionBatch
 
 
@@ -33,7 +34,7 @@ def flatten(dictionary, level=[]):
     return tmp_dict
 
 
-def transpose_lists(output: list[list]):
+def transpose_lists(output: List[list]):
     """Transposes the ordering of a list of lists."""
     return list(map(list, zip(*output)))
 
