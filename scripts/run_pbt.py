@@ -47,9 +47,9 @@ init_space = {name: tune.sample_from(hp.init) for name, hp in HYPERPARAM_SPACE.i
 mandatory_overrides = {
     "datamodule": DATASET_STR,
     "model": DATASET_STR,
-    "logger.wandb_logger.project": PROJECT_STR,
-    "logger.wandb_logger.tags.1": DATASET_STR,
-    "logger.wandb_logger.tags.2": RUN_TAG,
+    # "logger.wandb_logger.project": PROJECT_STR,
+    # "logger.wandb_logger.tags.1": DATASET_STR,
+    # "logger.wandb_logger.tags.2": RUN_TAG,
 }
 RUN_DIR.mkdir(parents=True)
 # Copy this script into the run directory

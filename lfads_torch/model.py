@@ -365,8 +365,7 @@ class LFADS(pl.LightningModule):
 class MRLFADS(pl.LightningModule):
     def __init__(
         self,
-        model_config_path: str,
-        model_config_name: str,
+        areas_info: dict,
     ):
         super().__init__()
         self.save_hyperparameters(
@@ -374,7 +373,7 @@ class MRLFADS(pl.LightningModule):
         )
 
         # Build all the areas (SR-LFADS)
-        self._build_areas()
+        self._build_areas(areas_info)
 
     def forward(
         self,
@@ -387,12 +386,9 @@ class MRLFADS(pl.LightningModule):
     def training_step(self):
         pass
 
-    def _build_areas(self):
-        # Load SR-LFADS hyperparameters from configuration file
-        hydra.initialize_config_dir(self.hparms.model_config_path)
-        cfg = hydra.compose(self.hparams.model_config_name)
-
+    def _build_areas(self, areas_info):
         # Build all SR-LFADS instances
         self.areas = nn.ModuleDict()
-        for area_name, area_kwargs in cfg.items():
-            self.areas[area_name] = LFADS(**area_kwargs) # TODO: Add kwargs that are not in yaml
+        for area_name, area_kwargs in areas_info.items():
+            self.areas[area_name] = LFADS(**area_kwargs)
+            

@@ -48,7 +48,9 @@ def run_model(
 
     # Instantiate `LightningDataModule` and `LightningModule`
     datamodule = instantiate(config.datamodule, _convert_="all")
+    import pdb; pdb.set_trace()
     model = instantiate(config.model)
+    import pdb; pdb.set_trace()
 
     # If `checkpoint_dir` is passed, find the most recent checkpoint in the directory
     if checkpoint_dir:
