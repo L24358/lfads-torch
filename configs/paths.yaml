@@ -1,0 +1,2 @@
+homepath: "/root/capsule/"
+datapath: "${homepath}data/"

@@ -5,17 +5,18 @@ import torch
 from pytorch_lightning.trainer.supporters import CombinedLoader
 from sklearn.model_selection import train_test_split
 from torch import Tensor
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, random_split
 
-from typing import List
+from typing import List, Union
 from .tuples import SessionBatch
+from .utils import get_paths
 
 MANDATORY_KEYS = {
     "train": ["encod_data", "recon_data"],
     "valid": ["encod_data", "recon_data"],
     "test": ["encod_data"],
 }
-
+PATHS = get_paths()
 
 def to_tensor(array):
     return torch.tensor(array, dtype=torch.float)
@@ -108,7 +109,6 @@ def reshuffle_train_valid(data_dict, seed, ratio=None):
         data_dict.update({"train_" + k: ta, "valid_" + k: va})
     return data_dict
 
-
 class SessionDataset(Dataset):
     def __init__(
         self, model_tensors: SessionBatch, extra_tensors: tuple
@@ -128,6 +128,23 @@ class SessionDataset(Dataset):
     def __len__(self):
         return len(self.model_tensors[0])
 
+class SessionAreaDataset(Dataset):
+    def __init__(
+        self,
+        data_dict: dict,
+    ):
+        self.data_dict = data_dict
+        self.B, self.T, _ = list(data_dict.values())[0].shape
+        
+        self.batch_data_dict_list = [
+            {key: value[idx] for key, value in data_dict.items()}
+            for idx in range(self.B)
+        ]
+        
+    def __getitem__(self, idx):
+        return self.batch_data_dict_list[idx]
+    
+    def __len__(self): return self.B
 
 class BasicDataModule(pl.LightningDataModule):
     def __init__(
@@ -220,3 +237,80 @@ class BasicDataModule(pl.LightningDataModule):
                     shuffle=False,
                 )
         return dataloaders
+
+class MesoMapDataModule(pl.LightningDataModule):
+    """
+    Mesoscale activity map data from 
+        ``Brain-wide neural activity underlying memory-guided movement``, Chen et al. (2023).
+    
+    Reads a .h5 file with the hierarchical structure of:
+        file (subject) --> group (session) --> dataset (area data or info)
+        
+        - ``file`` is named as "sub-{subject_id}"
+        - ``session`` is named as "ses-{session_id}"
+        - ``area data`` is named as "area-{abbreviation}", and has attribute ``type`` == "data"
+        - ``info`` is named as "{information_type}", and has attribute ``type`` == "info"
+    """
+    def __init__(
+        self,
+        subject_id: int,
+        session_idx: Union[int, str],
+        batch_size: int = 16,
+        p_split: list = [0.85, 0.15],
+    ):
+        super().__init__()
+        self.save_hyperparameters()
+        
+    def setup(self, stage=None):
+        hps = self.hparams
+        
+        filename = f'{PATHS.datapath}sub-{hps.subject_id}/sub-{hps.subject_id}.h5'
+        with h5py.File(filename, 'r') as file:
+
+            # Use sessions according to session_idx
+            session_names = list(file.keys())
+            if hps.session_idx == "all": session_idxs = list(range(len(session_names)))
+            else: session_idxs = [hps.session_idx]
+
+            self.train_session_datasets = []
+            self.val_session_datasets = []
+            for si in session_idxs:
+                group = file[session_names[si]]
+                dataset_names = [key for key in group.keys() if "area-" in key]
+
+                # Filter data by photostim_onset
+                filter1 = group["photostim_onset"][:]
+                included_batches = np.where(filter1 == b"N/A")[0]
+
+                # Turn data into numpy structured array
+                area_data_dict = {}
+                for dataset_name in dataset_names:
+                    ds = group[dataset_name]
+                    assert ds.attrs.get("type") == "data"
+                    area_data_dict[dataset_name.replace("area-", "")] = ds[:][included_batches]
+                session_dataset = SessionAreaDataset(area_data_dict)
+                train_ds, val_ds = random_split(session_dataset, hps.p_split)
+                self.train_session_datasets.append(train_ds)
+                self.val_session_datasets.append(val_ds)
+                
+    def train_dataloader(self, shuffle=True):
+        dataloaders = {
+            i: DataLoader(
+                ds,
+                batch_size=self.hparams.batch_size,
+                shuffle=shuffle,
+                drop_last=True,
+            )
+            for i, ds in enumerate(self.train_session_datasets)
+        }
+        return CombinedLoader(dataloaders, mode="max_size_cycle")
+    
+    def val_dataloader(self):
+        dataloaders = {
+            i: DataLoader(
+                ds,
+                batch_size=self.hparams.batch_size,
+            )
+            for i, ds in enumerate(self.val_session_datasets)
+        }
+        return CombinedLoader(dataloaders, mode="max_size_cycle")

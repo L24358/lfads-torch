@@ -1,5 +1,6 @@
+import hydra
 import torch
-
+from omegaconf import DictConfig
 from typing import List
 from .tuples import SessionBatch
 
@@ -58,3 +59,8 @@ def send_batch_to_device(batch, device):
             )
 
     return send_to_device(batch)
+
+def get_paths():
+    hydra.initialize(config_path="../configs")
+    cfg = hydra.compose(config_name="paths")
+    return cfg

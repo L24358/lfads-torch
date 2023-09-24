@@ -84,7 +84,7 @@ class Encoder(nn.Module):
             fwd_steps = hps.recon_seq_len - hps.encod_seq_len
             ci = F.pad(ci, (0, 0, 0, fwd_steps, 0, 0))
         else:
-            # Create a placeholder if there's no controller
+            # Create a placeholder if there's no conctroller
             ci = torch.zeros(data.shape[0], hps.recon_seq_len, 0).to(data.device)
-
+            
         return ic_mean, ic_std, ci
