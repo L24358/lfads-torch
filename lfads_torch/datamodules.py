@@ -135,17 +135,18 @@ class SessionAreaDataset(Dataset):
     ):
         self.data_list = list(data_dict.values())
         self.empty_dict = {key: np.zeros(0) for key in self.data_list[0]}
+        self.empty_array = np.zeros(0)
         
     def __getitem__(self, idx):
         return SessionBatch(
                     encod_data=self.data_list[idx],
                     recon_data=self.data_list[idx],
                     ext_input=self.empty_dict,
-                    truth=None,   # no ground truth
-                    sv_mask=None, # implement sv_mask elsewhere
+                    truth=self.empty_array,   # no ground truth
+                    sv_mask=self.empty_array, # implement sv_mask elsewhere
                 )
     
-    def __len__(self): return self.B
+    def __len__(self): return len(self.data_list)
 
 class BasicDataModule(pl.LightningDataModule):
     def __init__(
@@ -284,7 +285,7 @@ class MesoMapDataModule(pl.LightningDataModule):
                 included_batches = np.where(filter1 == b"N/A")[0]
                 batch_dim = len(included_batches)
 
-                # Turn data into numpy structured array
+                # Turn data into dictionary, then SessionAreaDataset
                 area_data_dict = {}
                 for dataset_name in dataset_names:
                     ds = group[dataset_name]
@@ -292,6 +293,7 @@ class MesoMapDataModule(pl.LightningDataModule):
                     
                     arr = ds[:][included_batches]
                     for bi in range(batch_dim):
+                        if dataset_name == dataset_names[0]: area_data_dict[bi] = {}
                         area_data_dict[bi][dataset_name.replace("area-", "")] = arr[bi]
                 session_dataset = SessionAreaDataset(area_data_dict)
                 train_ds, val_ds = random_split(session_dataset, hps.p_split)

@@ -159,3 +159,62 @@ class Decoder(nn.Module):
         dec_output = (gen_init, *split_states)
 
         return dec_output
+
+class SRDecoder(nn.Module):
+    def __init__(self, hparams):
+        super().__init__()
+        self.hparams = hps = hparams
+
+        self.dropout = nn.Dropout(hps.dropout_rate)
+        # Create the mapping from ICs to gen_state
+        self.ic_to_g0 = nn.Linear(hps.ic_dim, hps.gen_dim)
+        init_linear_(self.ic_to_g0)
+        # Create the decoder RNNCell
+        self.rnncell = DecoderCell(hparams=hparams)
+        # Initial hidden state for controller
+        self.con_h0 = nn.Parameter(torch.zeros((1, hps.con_dim), requires_grad=True))
+        
+    def forward(self, ic_samp, ci, ext_input, sample_posteriors=True):
+        hps = self.hparams
+
+        # Get size of current batch (may be different than hps.batch_size)
+        batch_size = ic_samp.shape[0]
+        # Calculate initial generator state and pass it to the RNN with dropout rate
+        gen_init = self.ic_to_g0(ic_samp)
+        gen_init_drop = self.dropout(gen_init)
+        # Pad external inputs if necessary and perform dropout
+        fwd_steps = hps.recon_seq_len - ext_input.shape[1]
+        if fwd_steps > 0:
+            pad = torch.zeros(batch_size, fwd_steps, hps.ext_input_dim)
+            ext_input = torch.cat([ext_input, pad.to(ext_input.device)], axis=1)
+        ext_input_drop = self.dropout(ext_input)
+        # Prepare the decoder inputs and and initial state of decoder RNN
+        dec_rnn_input = torch.cat([ci, ext_input_drop], dim=2)
+        device = gen_init.device
+        dec_rnn_h0 = torch.cat(
+            [
+                gen_init,
+                torch.tile(self.con_h0, (batch_size, 1)),
+                torch.zeros((batch_size, hps.co_dim), device=device),
+                torch.ones((batch_size, hps.co_dim), device=device),
+                torch.zeros(
+                    (batch_size, hps.co_dim + hps.ext_input_dim), device=device
+                ),
+                self.rnncell.fac_linear(gen_init_drop),
+            ],
+            dim=1,
+        )
+
+        hidden = dec_rnn_h0
+        dec_rnn_input = torch.transpose(dec_rnn_input, 0, 1) # shape = (time, batch, num neurons)
+        output = []
+        for input_step in dec_rnn_input:
+            hidden = self.cell(input_step, hidden, sample_posteriors=sample_posteriors)
+            output.append(hidden)
+        output = torch.stack(output, dim=1)
+        states = output
+        
+        split_states = torch.split(states, self.rnn.cell.state_dims, dim=2)
+        dec_output = (gen_init, *split_states)
+
+        return dec_output

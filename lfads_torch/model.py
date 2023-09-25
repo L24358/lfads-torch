@@ -100,23 +100,9 @@ class LFADS(pl.LightningModule):
         sample_posteriors: bool = False,
         output_means: bool = True,
     ) -> dict:
-        # Allow SessionBatch input
-        if type(batch) == SessionBatch and len(self.readin) == 1:
-            batch = {0: batch}
-        # Determine which sessions are in the batch
-        sessions = sorted(batch.keys())
-        # Keep track of batch sizes so we can split back up
-        batch_sizes = [len(batch[s].encod_data) for s in sessions]
-        # Pass the data through the readin networks
-        encod_data = torch.cat([self.readin[s](batch[s].encod_data) for s in sessions])
-        # Collect the external inputs
-        ext_input = torch.cat([batch[s].ext_input for s in sessions])
-        # Pass the data through the encoders
-        ic_mean, ic_std, ci = self.encoder(encod_data)
-        # Create the posterior distribution over initial conditions
-        ic_post = self.ic_prior.make_posterior(ic_mean, ic_std)
-        # Choose to take a sample or to pass the mean
-        ic_samp = ic_post.rsample() if sample_posteriors else ic_mean
+        # Preprocess and pass data through encoder
+        (sessions, batch_sizes,), (ic_mean, ic_std, ic_sample), (ci,), (ext_input,) = self.encode(batch, sample_posteriors)
+        
         # Unroll the decoder to estimate latent states
         (
             gen_init,
@@ -127,20 +113,10 @@ class LFADS(pl.LightningModule):
             gen_inputs,
             factors,
         ) = self.decoder(ic_samp, ci, ext_input, sample_posteriors=sample_posteriors)
-        # Convert the factors representation into output distribution parameters
-        factors = torch.split(factors, batch_sizes)
-        output_params = [self.readout[s](f) for s, f in zip(sessions, factors)]
-        # Separate parameters of the output distribution
-        output_params = [
-            self.recon[s].reshape_output_params(op)
-            for s, op in zip(sessions, output_params)
-        ]
-        # Convert the output parameters to means if requested
-        if output_means:
-            output_params = [
-                self.recon[s].compute_means(op)
-                for s, op in zip(sessions, output_params)
-            ]
+        
+        # Reconstruct (readout) firing rates
+        output_params, factors = self.reconstruct(output_means, batch_sizes, sessions, factors)
+        
         # Separate model outputs by session
         output = transpose_lists(
             [
@@ -158,6 +134,50 @@ class LFADS(pl.LightningModule):
         )
         # Return the parameter estimates and all intermediate activations
         return {s: SessionOutput(*o) for s, o in zip(sessions, output)}
+    
+    def encode(self,
+        batch: dict,
+        sample_posteriors: bool,
+        ):
+        # Allow SessionBatch input
+        if type(batch) == SessionBatch and len(self.readin) == 1:
+            batch = {0: batch}
+        # Determine which sessions are in the batch
+        sessions = sorted(batch.keys())
+        # Keep track of batch sizes so we can split back up
+        batch_sizes = [len(batch[s].encod_data) for s in sessions]
+        # Pass the data through the readin networks
+        encod_data = torch.cat([self.readin[s](batch[s].encod_data) for s in sessions])
+        # Collect the external inputs
+        ext_input = torch.cat([batch[s].ext_input for s in sessions])
+        # Pass the data through the encoders
+        ic_mean, ic_std, ci = self.encoder(encod_data)
+        # Create the posterior distribution over initial conditions
+        ic_post = self.ic_prior.make_posterior(ic_mean, ic_std)
+        # Choose to take a sample or to pass the mean
+        ic_samp = ic_post.rsample() if sample_posteriors else ic_mean
+        return (sessions, batch_sizes,), (ic_mean, ic_std, ic_sample), (ci,), (ext_input,)
+    
+    def reconstruct(self,
+        output_means: bool,
+        batch_sizes: list,
+        sessions,
+        factors):
+        # Convert the factors representation into output distribution parameters
+        factors = torch.split(factors, batch_sizes)
+        output_params = [self.readout[s](f) for s, f in zip(sessions, factors)]
+        # Separate parameters of the output distribution
+        output_params = [
+            self.recon[s].reshape_output_params(op)
+            for s, op in zip(sessions, output_params)
+        ]
+        # Convert the output parameters to means if requested
+        if output_means:
+            output_params = [
+                self.recon[s].compute_means(op)
+                for s, op in zip(sessions, output_params)
+            ]
+        return output_params, factors
 
     def configure_optimizers(self):
         hps = self.hparams
@@ -361,6 +381,25 @@ class LFADS(pl.LightningModule):
         for aug in self.train_aug_stack.batch_transforms:
             if hasattr(aug, "cd_rate"):
                 self.log("hp/cd_rate", aug.cd_rate)
+                
+class SRLFADS(LFADS):
+    def __init__(
+        self,
+        *args,
+    ):
+    super().__init__(*args)
+    self.decoder = NotImplemented # overwrite LFADS decoder
+    
+    def forward(self): pass
+
+    def decode(
+        self,
+        ic_samp,
+        ci,
+        ext_input,
+        sample_posteriors,
+        ):
+        pass
 
 class MRLFADS(pl.LightningModule):
     def __init__(
@@ -381,7 +420,31 @@ class MRLFADS(pl.LightningModule):
         sample_posteriors: bool = False,
         output_means: bool = True,
     ):
-        pass
+        for area_name in areas.keys():
+            area = self.areas[area_name]
+            (sessions, batch_sizes,), (ic_mean, ic_std, ic_sample), (ci,), (ext_input,) = area(batch, sample_posteriors)
+            () = area.decoder(ic_samp, ci, ext_input, sample_posteriors) # TODO: decoder step
+            output_params, factors = area.reconstruct(output_means, batch_sizes, sessions, factors)
+
+            # Separate model outputs by session # TODO: Think about what to save
+            output = transpose_lists(
+                [
+                    output_params,
+                    factors,
+                    torch.split(ic_mean, batch_sizes),
+                    torch.split(ic_std, batch_sizes),
+                    torch.split(ic_samp, batch_sizes),
+                    torch.split(co_means, batch_sizes),
+                    torch.split(co_stds, batch_sizes),
+                    torch.split(co_samp, batch_sizes),
+                    torch.split(gen_states, batch_sizes),
+                    torch.split(gen_init, batch_sizes),
+                    torch.split(gen_inputs, batch_sizes),
+                    torch.split(con_states, batch_sizes),
+                ]
+            )
+            # Return the parameter estimates and all intermediate activations
+            output_dict = {s: SessionOutput(*o) for s, o in zip(sessions, output)}
 
     def training_step(self):
         pass
@@ -390,5 +453,5 @@ class MRLFADS(pl.LightningModule):
         # Build all SR-LFADS instances
         self.areas = nn.ModuleDict()
         for area_name, area_kwargs in areas_info.items():
-            self.areas[area_name] = LFADS(**area_kwargs)
+            self.areas[area_name] = SRLFADS(**area_kwargs)
             
