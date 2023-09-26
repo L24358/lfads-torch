@@ -183,7 +183,7 @@ class SRDecoder(nn.Module):
             # Create the controller
             self.con_cell = ClippedGRUCell(
                 2 * hps.ci_enc_dim + hps.fac_dim, hps.con_dim, clip_value=hps.cell_clip
-            )
+            ).float()
             # Define the mapping from controller state to controller output parameters
             self.co_linear = nn.Linear(hps.con_dim, hps.co_dim * 2)
             init_linear_(self.co_linear)
@@ -207,7 +207,6 @@ class SRDecoder(nn.Module):
         gen_state, con_state, co_mean, co_std, gen_input, factor, com_step = torch.split(
             h_0, self.state_dims, dim=1
         )
-        import pdb; pdb.set_trace()
         ci_step, ext_input_step = torch.split(input, self.input_dims, dim=1)
 
         if self.use_con:
@@ -215,7 +214,7 @@ class SRDecoder(nn.Module):
             con_input = torch.cat([ci_step, factor], dim=1)
             con_input_drop = self.dropout(con_input)
             # Compute and store the next hidden state of the controller
-            con_state = self.con_cell(con_input_drop, con_state)
+            con_state = self.con_cell(con_input_drop.float(), con_state.float()) # TODO
             # Compute the distribution of the controller outputs at this timestep
             co_params = self.co_linear(con_state)
             co_mean, co_logvar = torch.split(co_params, hps.co_dim, dim=1)
@@ -229,7 +228,7 @@ class SRDecoder(nn.Module):
             # If no controller is being used, can still provide ext inputs
             gen_input = ext_input_step
         # compute and store the next
-        gen_state = self.gen_cell(gen_input, gen_state)
+        gen_state = self.gen_cell(gen_input.float(), gen_state.float())
         gen_state_drop = self.dropout(gen_state)
         factor = self.fac_linear(gen_state_drop)
 

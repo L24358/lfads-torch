@@ -372,13 +372,14 @@ class SRLFADS(LFADS):
     ):
         super().__init__(**kwargs)
         self.name = area_name
+        self.com_dim = 100 # TODO
         
         # Create the mapping from ICs to gen_state
         self.dropout = nn.Dropout(self.hparams.dropout_rate)
         self.ic_to_g0 = nn.Linear(self.hparams.ic_dim, self.hparams.gen_dim)
         init_linear_(self.ic_to_g0)
         self.fac_linear = KernelNormalizedLinear(self.hparams.gen_dim, self.hparams.fac_dim, bias=False)
-        self.decoder = SRDecoder(self.decoder.hparams, com_dim=100) # overwrite LFADS decoder # TODO com_dim
+        self.decoder = SRDecoder(self.decoder.hparams, com_dim=self.com_dim).float() # overwrite LFADS decoder # TODO com_dim
         self.con_h0 = nn.Parameter(torch.zeros((1, self.hparams.con_dim), requires_grad=True))
     
     def forward(self): raise NotImplementedError
@@ -406,26 +407,22 @@ class SRLFADS(LFADS):
 
     def decode(
         self,
-        gen_init_drop,
-        factor_init,
-        ci,
-        ext_input,
-        com_samp,
+        dec_rnn_input_step,
+        dec_rnn_hidden,
         sample_posteriors,
         ):
+        hidden = self.decoder(dec_rnn_input_step, dec_rnn_hidden, sample_posteriors=True) # TODO pass actual sample posteriors # [0]
+        return hidden
+    
+    def pack(
+        self,
+        gen_init_drop,
+        factor_init,
+        com_samp,
+    ):
         hps = self.hparams
-
-        # Get size of current batch (may be different than hps.batch_size)
+        # Get size of current batch (may be different than hps.batch_size), TODO: skip exteral input
         batch_size = gen_init_drop.shape[0]
-        # Pad external inputs if necessary and perform dropout
-        # fwd_steps = hps.recon_seq_len - ext_input.shape[1]
-        # if fwd_steps > 0:
-        #     pad = torch.zeros(batch_size, fwd_steps, hps.ext_input_dim)
-        #     ext_input = torch.cat([ext_input, pad.to(ext_input.device)], axis=1)
-        # ext_input_drop = self.dropout(ext_input)
-        # Prepare the decoder inputs and and initial state of decoder RNN
-        
-        dec_rnn_input = torch.cat([ci, ext_input], dim=2) # not ext_input_drop anymore
         device = gen_init_drop.device
         dec_rnn_h0 = torch.cat(
             [
@@ -441,9 +438,7 @@ class SRLFADS(LFADS):
             ],
             dim=1,
         )
-        dec_rnn_input = torch.transpose(dec_rnn_input, 0, 1)
-        self.decoder(dec_rnn_input[0], dec_rnn_h0, sample_posteriors=True) # TODO pass actual sample posteriors # [0]
-        
+        return dec_rnn_h0
 
 class MRLFADS(pl.LightningModule):
     def __init__(
@@ -488,39 +483,46 @@ class MRLFADS(pl.LightningModule):
             batch = {0: batch}
         sessions = sorted(batch.keys())
         batch_sizes = [len(batch[s].encod_data) for s in sessions]
-        time_sizes = [list(batch[s].encod_data.values())[0].size(1) for s in sessions]
         
         # Run encode
         for area_name in self.areas.keys():
             area = self.areas[area_name]
-            (ic_mean, ic_std, ic_samp, gen_init, factor_init), (ci,), (ext_input,) = area.encode(batch, sample_posteriors, sessions)
+            (ic_mean, ic_std, ic_samp, gen_init_drop, factor_init), (ci,), (ext_input,) = area.encode(batch, sample_posteriors, sessions)
+            # TODO: save this
+            dec_rnn_input = torch.cat([ci, ext_input], dim=2) # not ext_input_drop anymore
+            dec_rnn_input = torch.transpose(dec_rnn_input, 0, 1) # shape = (time, batch, num neurons)
             
         # Run decode
-        for area_name in self.areas.keys():
-            area = self.areas[area_name]
-            com_samp = factor_init # this is clearly wrong
-            () = area.decode(gen_init, factor_init, ci, ext_input, com_samp, sample_posteriors) # TODO: decoder step, gen_init_drop
-            output_params, factors = area.reconstruct(output_means, batch_sizes, sessions, factors)
+        for t in range(len(dec_rnn_input)):
+            for area_name in self.areas.keys():
+                area = self.areas[area_name]
+                com_samp = factor_init # this is clearly wrong
+                dec_rnn_hidden = area.pack(gen_init_drop, factor_init, com_samp)
+                print(dec_rnn_hidden.shape)
+                dec_rnn_hidden = area.decode(dec_rnn_input[t], dec_rnn_hidden, sample_posteriors) # TODO: decoder step, gen_init_drop
+                print(dec_rnn_hidden.shape)
+                import pdb; pdb.set_trace()
+                output_params, factors = area.reconstruct(output_means, batch_sizes, sessions, factors)
 
-            # Separate model outputs by session # TODO: Think about what to save
-            output = transpose_lists(
-                [
-                    output_params,
-                    factors,
-                    torch.split(ic_mean, batch_sizes),
-                    torch.split(ic_std, batch_sizes),
-                    torch.split(ic_samp, batch_sizes),
-                    torch.split(co_means, batch_sizes),
-                    torch.split(co_stds, batch_sizes),
-                    torch.split(co_samp, batch_sizes),
-                    torch.split(gen_states, batch_sizes),
-                    torch.split(gen_init, batch_sizes),
-                    torch.split(gen_inputs, batch_sizes),
-                    torch.split(con_states, batch_sizes),
-                ]
-            )
-            # Return the parameter estimates and all intermediate activations
-            output_dict = {s: SessionOutput(*o) for s, o in zip(sessions, output)}
+                # Separate model outputs by session # TODO: Think about what to save
+                output = transpose_lists(
+                    [
+                        output_params,
+                        factors,
+                        torch.split(ic_mean, batch_sizes),
+                        torch.split(ic_std, batch_sizes),
+                        torch.split(ic_samp, batch_sizes),
+                        torch.split(co_means, batch_sizes),
+                        torch.split(co_stds, batch_sizes),
+                        torch.split(co_samp, batch_sizes),
+                        torch.split(gen_states, batch_sizes),
+                        torch.split(gen_init, batch_sizes),
+                        torch.split(gen_inputs, batch_sizes),
+                        torch.split(con_states, batch_sizes),
+                    ]
+                )
+                # Return the parameter estimates and all intermediate activations
+                output_dict = {s: SessionOutput(*o) for s, o in zip(sessions, output)}
 
     def training_step(self, batch, batch_idx):
         self(batch)
