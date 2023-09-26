@@ -195,18 +195,20 @@ class SRDecoder(nn.Module):
             hps.co_dim,
             hps.co_dim + hps.ext_input_dim,
             hps.fac_dim,
+            com_dim, # TODO
         ]
         # Keep track of the input dimensions
         self.input_dims = [2 * hps.ci_enc_dim, hps.ext_input_dim]
 
     def forward(self, input, h_0, sample_posteriors=True):
         hps = self.hparams
-
+        
         # Split the state up into variables of interest
-        gen_state, con_state, co_mean, co_std, gen_input, factor = torch.split(
+        gen_state, con_state, co_mean, co_std, gen_input, factor, com_step = torch.split(
             h_0, self.state_dims, dim=1
         )
-        ci_step, ext_input_step, com_step = torch.split(input, self.input_dims, dim=1)
+        import pdb; pdb.set_trace()
+        ci_step, ext_input_step = torch.split(input, self.input_dims, dim=1)
 
         if self.use_con:
             # Compute controller inputs with dropout

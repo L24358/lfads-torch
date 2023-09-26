@@ -379,6 +379,7 @@ class SRLFADS(LFADS):
         init_linear_(self.ic_to_g0)
         self.fac_linear = KernelNormalizedLinear(self.hparams.gen_dim, self.hparams.fac_dim, bias=False)
         self.decoder = SRDecoder(self.decoder.hparams, com_dim=100) # overwrite LFADS decoder # TODO com_dim
+        self.con_h0 = nn.Parameter(torch.zeros((1, self.hparams.con_dim), requires_grad=True))
     
     def forward(self): raise NotImplementedError
 
@@ -405,7 +406,8 @@ class SRLFADS(LFADS):
 
     def decode(
         self,
-        ic_samp,
+        gen_init_drop,
+        factor_init,
         ci,
         ext_input,
         com_samp,
@@ -413,36 +415,34 @@ class SRLFADS(LFADS):
         ):
         hps = self.hparams
 
-        import pdb; pdb.set_trace()
         # Get size of current batch (may be different than hps.batch_size)
-        batch_size = ic_samp.shape[0]
-        # Calculate initial generator state and pass it to the RNN with dropout rate
-        gen_init = self.ic_to_g0(ic_samp)
-        gen_init_drop = self.dropout(gen_init)
+        batch_size = gen_init_drop.shape[0]
         # Pad external inputs if necessary and perform dropout
-        fwd_steps = hps.recon_seq_len - ext_input.shape[1]
-        if fwd_steps > 0:
-            pad = torch.zeros(batch_size, fwd_steps, hps.ext_input_dim)
-            ext_input = torch.cat([ext_input, pad.to(ext_input.device)], axis=1)
-        ext_input_drop = self.dropout(ext_input)
+        # fwd_steps = hps.recon_seq_len - ext_input.shape[1]
+        # if fwd_steps > 0:
+        #     pad = torch.zeros(batch_size, fwd_steps, hps.ext_input_dim)
+        #     ext_input = torch.cat([ext_input, pad.to(ext_input.device)], axis=1)
+        # ext_input_drop = self.dropout(ext_input)
         # Prepare the decoder inputs and and initial state of decoder RNN
-        dec_rnn_input = torch.cat([ci, ext_input_drop, com_samp], dim=2)
-        device = gen_init.device
+        
+        dec_rnn_input = torch.cat([ci, ext_input], dim=2) # not ext_input_drop anymore
+        device = gen_init_drop.device
         dec_rnn_h0 = torch.cat(
             [
-                gen_init,
+                gen_init_drop,
                 torch.tile(self.con_h0, (batch_size, 1)),
                 torch.zeros((batch_size, hps.co_dim), device=device),
                 torch.ones((batch_size, hps.co_dim), device=device),
                 torch.zeros(
                     (batch_size, hps.co_dim + hps.ext_input_dim), device=device
                 ),
-                self.rnn.cell.fac_linear(gen_init_drop),
+                factor_init,
+                com_samp,
             ],
             dim=1,
         )
         dec_rnn_input = torch.transpose(dec_rnn_input, 0, 1)
-        self.decoder(dec_rnn_input, dec_rnn_h0, sample_posteriors=True) # TODO pass actual sample posteriors
+        self.decoder(dec_rnn_input[0], dec_rnn_h0, sample_posteriors=True) # TODO pass actual sample posteriors # [0]
         
 
 class MRLFADS(pl.LightningModule):
@@ -499,7 +499,7 @@ class MRLFADS(pl.LightningModule):
         for area_name in self.areas.keys():
             area = self.areas[area_name]
             com_samp = factor_init # this is clearly wrong
-            () = area.decode(gen_init, ci, ext_input, com_samp, sample_posteriors) # TODO: decoder step
+            () = area.decode(gen_init, factor_init, ci, ext_input, com_samp, sample_posteriors) # TODO: decoder step, gen_init_drop
             output_params, factors = area.reconstruct(output_means, batch_sizes, sessions, factors)
 
             # Separate model outputs by session # TODO: Think about what to save
