@@ -420,6 +420,12 @@ class MRLFADS(pl.LightningModule):
         sample_posteriors: bool = False,
         output_means: bool = True,
     ):
+        # Run encode
+        for area_name in area.keys():
+            area = self.areas[area_name]
+            (sessions, batch_sizes,), (ic_mean, ic_std, ic_sample), (ci,), (ext_input,) = area.encode(
+                batch[area_name], sample_posteriors)
+            
         for area_name in areas.keys():
             area = self.areas[area_name]
             (sessions, batch_sizes,), (ic_mean, ic_std, ic_sample), (ci,), (ext_input,) = area(batch, sample_posteriors)
