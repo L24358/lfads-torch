@@ -23,7 +23,7 @@ shutil.copyfile(__file__, RUN_DIR / Path(__file__).name)
 os.chdir(RUN_DIR)
 run_model(
     overrides={
-        "datamodule": DATASET_STR,
+        # "datamodule": DATASET_STR,
         # "model": DATASET_STR,
     },
     config_path="../configs/mrlfads_single.yaml",

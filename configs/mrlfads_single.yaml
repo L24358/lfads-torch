@@ -1,6 +1,6 @@
 defaults:
   - model: SMA5_FMN
-  - datamodule: nlb_mc_maze
+  - datamodule: meso
   - callbacks: default
   - _self_
   

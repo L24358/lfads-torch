@@ -1,0 +1,4 @@
+_target_: lfads_torch.datamodules.MesoMapDataModule
+subject_id: 456774
+session_idx: 0
+batch_size: 16

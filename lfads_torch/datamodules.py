@@ -133,17 +133,16 @@ class SessionAreaDataset(Dataset):
         self,
         data_dict: dict,
     ):
-        self.data_list = list(data_dict.values())
-        self.empty_dict = {key: np.zeros(0) for key in self.data_list[0]}
-        self.empty_array = np.zeros(0)
+        self.data_list = list(data_dict.values()) # keys: batch index, value: {``area_name``: tensor of shape (time, num neurons)}
+        self.empty_dict = {key: np.zeros(list(value.shape[:-1]) + [0]) for key, value in self.data_list[0].items()}
         
     def __getitem__(self, idx):
         return SessionBatch(
                     encod_data=self.data_list[idx],
                     recon_data=self.data_list[idx],
                     ext_input=self.empty_dict,
-                    truth=self.empty_array,   # no ground truth
-                    sv_mask=self.empty_array, # implement sv_mask elsewhere
+                    truth=self.empty_dict,   # no ground truth
+                    sv_mask=self.empty_dict, # implement sv_mask elsewhere
                 )
     
     def __len__(self): return len(self.data_list)
