@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-class ICAndInput(nn.Module):
+class ICSampler(nn.Module):
     def __init__(self, hparams, ic_prior):
         super().__init__()
         self.hparams = hps = hparams
@@ -16,8 +16,6 @@ class ICAndInput(nn.Module):
         self,
         ic_mean,
         ic_std,
-        ci,
-        ext_input,
     ):
         # Create the posterior distribution over initial conditions
         ic_post = self.ic_prior.make_posterior(ic_mean, ic_std)
@@ -28,5 +26,5 @@ class ICAndInput(nn.Module):
         gen_init_drop = self.dropout(gen_init)
         factor_init = self.fac_linear(gen_init_drop)
         dec_rnn_input = torch.cat([ci, ext_input], dim=2)
-        return self.con_h0, gen_init_drop, factor_init, dec_rnn_input
+        return self.con_h0, gen_init_drop, factor_init
         

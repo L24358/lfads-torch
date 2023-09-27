@@ -8,13 +8,12 @@ from .metrics import ExpSmoothedMetric, r2_score, regional_bits_per_spike
 from .modules import augmentations
 from .modules.decoder import Decoder, SRDecoder
 from .modules.encoder import Encoder
-from .modules.ic_and_input import ICAndInput
+from .modules.icsampler import ICSampler
+from .modules.communicator import Communicator
 from .modules.l2 import compute_l2_penalty
 from .modules.priors import Null
-from .tuples import SessionBatch, SessionOutput, SaveICAndInput
+from .tuples import SessionBatch, SessionOutput, SaveVariables
 from .utils import transpose_lists
-from .modules.initializers import init_linear_
-from .modules.decoder import KernelNormalizedLinear
 
 class LFADS(pl.LightningModule):
     def __init__(
@@ -417,7 +416,8 @@ class SRLFADS(nn.Module):
         self.readin = readin
         self.encoder = Encoder(self.hparams)
         self.decoder = SRDecoder(self.hparams)
-        self.ic_and_input = ICAndInput(self.hparams, ic_prior)
+        self.icsampler = ICSampler(self.hparams, ic_prior)
+        self.communicator = Communicator(self.hparams)
         self.readout = readout
         self.recon = reconstruction
         self.co_prior = co_prior
@@ -488,50 +488,53 @@ class MRLFADS(pl.LightningModule):
     ):
         super().__init__()
         self.save_hyperparameters(
-            ignore = []
+            ignore = ["areas_info"]
         )
 
         # Build all the areas (SR-LFADS)
+        self.area_names = list(areas_info.keys())
         self._build_areas(areas_info)
 
     def forward(
         self,
         batch: dict,
+        session_idx: int = 0,
         sample_posteriors: bool = False,
         output_means: bool = True,
     ):
-        # Keep track of session, batch_sizes and time
-        if type(batch) == SessionBatch and len(self.readin) == 1:
-            batch = {0: batch}
-        sessions = sorted(batch.keys())
-        batch_sizes = [len(batch[s].encod_data) for s in sessions]
+        # Preprocess session and setup save_var
+        batch = batch[session_idx]
+        self._build_save_var(batch.encod_data[self.area_names[0]].size(0))
         
         # Run encode
         for area_name in self.areas.keys():
             area = self.areas[area_name]
             
-            # encoder --> ic_and_input # TODO: save this
-            encod_data = torch.cat([self.readin[s](batch[s].encod_data[area.name]) for s in sessions])
-            ext_input = torch.cat([batch[s].ext_input[area.name] for s in sessions])
+            # encoder --> ic_and_input
+            encod_data = area.readin[session_idx](batch.encod_data[area_name])
             ic_mean, ic_std, ci = area.encoder(encod_data)
-            con_init, gen_init, factor_init, dec_rnn_input = area.ic_and_input(ic_mean, ic_std, ci, ext_input)
+            con_init, gen_init, factor_init = area.icsampler(ic_mean, ic_std,)
             
             # Save the results
-            self.save_encode[area_name].con_init = con_init
-            self.save_encode[area_name].gen_init = gen_init
-            self.save_encode[area_name].factor_init = factor_init
-            self.save_encode[area_name].ci = dec_rnn_input
+            self.save_var[area_name].con_state[:,0,:] = con_init
+            self.save_var[area_name].gen_state[:,0,:] = gen_init
+            self.save_var[area_name].factor_state[:,0,:] = factor_init
+            self.save_var[area_name].ci = ci
             
         # Run decode
-        for t in range(len(dec_rnn_input)): # TODO: dec_rnn_input no longer transposed
+        for t in range(self.recon_seq_len):
             for area_name in self.areas.keys():
                 area = self.areas[area_name]
-                com_samp = factor_init # this is clearly wrong
+                com_samp = area.communicator(self.save_var[area_name].factor_state[:,t,:])
+                
+                states = NotImplemented # includes c0, g0, f0
+                inputs = NotImplemented # includes ci, com_samp
+                con_state, gen_state, factor_state = area.decoder(states[:,t,:], inputs[:,t,:])
+                
+                # Save the states into dataclass
+                
                 dec_rnn_hidden = area.pack(gen_init_drop, factor_init, com_samp)
-                print(dec_rnn_hidden.shape)
                 dec_rnn_hidden = area.decode(dec_rnn_input[t], dec_rnn_hidden, sample_posteriors) # TODO: decoder step, gen_init_drop
-                print(dec_rnn_hidden.shape)
-                import pdb; pdb.set_trace()
                 output_params, factors = area.reconstruct(output_means, batch_sizes, sessions, factors)
 
                 # Separate model outputs by session # TODO: Think about what to save
@@ -587,10 +590,22 @@ class MRLFADS(pl.LightningModule):
             return optimizer
 
     def _build_areas(self, areas_info):
+        # MR hyperparameters to copy into SR hyperparameters
+        hps_to_copy = [self.hparams.encod_seq_len, self.hparams.recon_seq_len, self.hparams.ic_enc_seq_len]
+        mr_hps_dict = {key: self.hparams[key] for key in hps_to_copy}
+        
         # Build all SR-LFADS instances
         self.areas = nn.ModuleDict()
-        self.save_ic_and_input = {}
         for area_name, area_kwargs in areas_info.items():
+            area_kwargs.update(mr_hps_dict)
             self.areas[area_name] = SRLFADS(area_name, **area_kwargs)
-            self.save_encode[area_name] = SaveICAndInput()
             
+    def _build_save_var(self, batch_size):
+        self.save_var = {}
+        for area_name in self.area_names:
+            self.save_var[area_name] = SaveVariables(
+                con_state = torch.zeros(batch_size, self.recon_seq_len, self.areas[area_name].con_dim),
+                gen_state = torch.zeros(batch_size, self.recon_seq_len, self.areas[area_name].gen_dim),
+                factor_state = torch.zeros(batch_size, self.recon_seq_len, self.areas[area_name].factor_dim),,
+                ci = None,
+            )

@@ -3,10 +3,7 @@ areas_info:
     SMA5:
         # --------- architecture --------- #
         encod_data_dim: 500
-        encod_seq_len: 34
-        recon_seq_len: 34
         ext_input_dim: 0
-        ic_enc_seq_len: 0
         ic_enc_dim: 64
         ci_enc_dim: 64
         ci_lag: 1
@@ -61,6 +58,11 @@ areas_info:
         cell_clip: 5.0
         loss_scale: 1.0e+4
         recon_reduce_mean: True
+
+# --------- sequence length --------- #
+encod_seq_len: 34
+recon_seq_len: 34
+ic_enc_seq_len: 0
 
 # --------- learning rate --------- #
 lr_init: 4.0e-3

@@ -29,8 +29,8 @@ SessionOutput = namedtuple(
 )
 
 @dataclass
-class SaveICAndInput:
-    con_init = None
-    gen_init = None
-    factor_init = None
+class SaveVariables:
+    con_state = None
+    gen_state = None
+    factor_state = None
     ci = None
