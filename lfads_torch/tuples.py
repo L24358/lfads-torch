@@ -1,4 +1,5 @@
-from collections import namedtuple
+from collections import namedtuple 
+from dataclasses import dataclass
 
 SessionBatch = namedtuple(
     "SessionBatch",
@@ -26,3 +27,10 @@ SessionOutput = namedtuple(
         "con_states",
     ],
 )
+
+@dataclass
+class SaveICAndInput:
+    con_init = None
+    gen_init = None
+    factor_init = None
+    ci = None

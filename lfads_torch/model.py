@@ -8,10 +8,10 @@ from .metrics import ExpSmoothedMetric, r2_score, regional_bits_per_spike
 from .modules import augmentations
 from .modules.decoder import Decoder, SRDecoder
 from .modules.encoder import Encoder
-from .modules.icsampler import ICSampler
+from .modules.ic_and_input import ICAndInput
 from .modules.l2 import compute_l2_penalty
 from .modules.priors import Null
-from .tuples import SessionBatch, SessionOutput
+from .tuples import SessionBatch, SessionOutput, SaveICAndInput
 from .utils import transpose_lists
 from .modules.initializers import init_linear_
 from .modules.decoder import KernelNormalizedLinear
@@ -367,7 +367,7 @@ class LFADS(pl.LightningModule):
                 
 # ===== MRLFADS related code =====#
 
-class SRLFADS(pl.Module):
+class SRLFADS(nn.Module):
     def __init__(
         self,
         area_name,
@@ -412,11 +412,12 @@ class SRLFADS(pl.Module):
         if not variational:
             assert isinstance(ic_prior, Null) and isinstance(co_prior, Null)
 
+        # Set up model components
         self.use_con = all([ci_enc_dim > 0, con_dim > 0, co_dim > 0])
         self.readin = readin
         self.encoder = Encoder(self.hparams)
         self.decoder = SRDecoder(self.hparams)
-        self.icsampler = ICSampler(self.hparams, ic_prior)
+        self.ic_and_input = ICAndInput(self.hparams, ic_prior)
         self.readout = readout
         self.recon = reconstruction
         self.co_prior = co_prior
@@ -509,18 +510,20 @@ class MRLFADS(pl.LightningModule):
         for area_name in self.areas.keys():
             area = self.areas[area_name]
             
-            # encoder --> icsampler --> obtain inits and ci (controller input) # TODO: save this
+            # encoder --> ic_and_input # TODO: save this
             encod_data = torch.cat([self.readin[s](batch[s].encod_data[area.name]) for s in sessions])
             ext_input = torch.cat([batch[s].ext_input[area.name] for s in sessions])
             ic_mean, ic_std, ci = area.encoder(encod_data)
-            gen_init, factor_init, con_init = area.icsampler(ic_mean, ic_std)
+            con_init, gen_init, factor_init, dec_rnn_input = area.ic_and_input(ic_mean, ic_std, ci, ext_input)
             
-            # TODO: 
-            dec_rnn_input = torch.cat([ci, ext_input], dim=2)
-            dec_rnn_input = torch.transpose(dec_rnn_input, 0, 1) # shape = (time, batch, num neurons)
+            # Save the results
+            self.save_encode[area_name].con_init = con_init
+            self.save_encode[area_name].gen_init = gen_init
+            self.save_encode[area_name].factor_init = factor_init
+            self.save_encode[area_name].ci = dec_rnn_input
             
         # Run decode
-        for t in range(len(dec_rnn_input)):
+        for t in range(len(dec_rnn_input)): # TODO: dec_rnn_input no longer transposed
             for area_name in self.areas.keys():
                 area = self.areas[area_name]
                 com_samp = factor_init # this is clearly wrong
@@ -586,6 +589,8 @@ class MRLFADS(pl.LightningModule):
     def _build_areas(self, areas_info):
         # Build all SR-LFADS instances
         self.areas = nn.ModuleDict()
+        self.save_ic_and_input = {}
         for area_name, area_kwargs in areas_info.items():
             self.areas[area_name] = SRLFADS(area_name, **area_kwargs)
+            self.save_encode[area_name] = SaveICAndInput()
             
