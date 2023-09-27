@@ -15,6 +15,7 @@ areas_info:
         ic_dim: 64
         gen_dim: 200
         fac_dim: 100
+        com_dim: 4
 
         # --------- readin / readout --------- #
         readin:
@@ -60,29 +61,6 @@ areas_info:
         cell_clip: 5.0
         loss_scale: 1.0e+4
         recon_reduce_mean: True
-
-        # --------- learning rate --------- #
-        lr_init: 4.0e-3
-        lr_stop: 1.0e-5
-        lr_decay: 0.95
-        lr_patience: 6
-        lr_adam_beta1: 0.9
-        lr_adam_beta2: 0.999
-        lr_adam_epsilon: 1.0e-8
-        lr_scheduler: False
-
-        # --------- regularization --------- #
-        weight_decay: 0.0
-        l2_start_epoch: 0
-        l2_increase_epoch: 80
-        l2_ic_enc_scale: 0.0
-        l2_ci_enc_scale: 0.0
-        l2_gen_scale: 0.0
-        l2_con_scale: 0.0
-        kl_start_epoch: 0
-        kl_increase_epoch: 80
-        kl_ic_scale: 1.0e-7
-        kl_co_scale: 1.0e-7
 
 # --------- learning rate --------- #
 lr_init: 4.0e-3

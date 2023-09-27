@@ -159,7 +159,7 @@ class Decoder(nn.Module):
         return dec_output
 
 class SRDecoder(nn.Module):
-    def __init__(self, hparams, com_dim=0):
+    def __init__(self, hparams):
         super().__init__()
         self.hparams = hps = hparams
         # Create the generator

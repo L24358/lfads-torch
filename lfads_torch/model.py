@@ -6,14 +6,15 @@ from typing import Dict, List
 
 from .metrics import ExpSmoothedMetric, r2_score, regional_bits_per_spike
 from .modules import augmentations
-from .modules.decoder import Decoder
+from .modules.decoder import Decoder, SRDecoder
 from .modules.encoder import Encoder
+from .modules.icsampler import ICSampler
 from .modules.l2 import compute_l2_penalty
 from .modules.priors import Null
 from .tuples import SessionBatch, SessionOutput
 from .utils import transpose_lists
 from .modules.initializers import init_linear_
-from .modules.decoder import KernelNormalizedLinear, SRDecoder
+from .modules.decoder import KernelNormalizedLinear
 
 class LFADS(pl.LightningModule):
     def __init__(
@@ -364,46 +365,66 @@ class LFADS(pl.LightningModule):
             if hasattr(aug, "cd_rate"):
                 self.log("hp/cd_rate", aug.cd_rate)
                 
-class SRLFADS(LFADS):
+# ===== MRLFADS related code =====#
+
+class SRLFADS(pl.Module):
     def __init__(
         self,
         area_name,
-        **kwargs,
+        encod_data_dim: int,
+        encod_seq_len: int,
+        recon_seq_len: int,
+        ext_input_dim: int,
+        ic_enc_seq_len: int,
+        ic_enc_dim: int,
+        ci_enc_dim: int,
+        ci_lag: int,
+        con_dim: int,
+        co_dim: int,
+        ic_dim: int,
+        gen_dim: int,
+        fac_dim: int,
+        com_dim: int,
+        dropout_rate: float,
+        reconstruction: nn.ModuleList,
+        variational: bool,
+        co_prior: nn.Module,
+        ic_prior: nn.Module,
+        ic_post_var_min: float,
+        cell_clip: float,
+        train_aug_stack: augmentations.AugmentationStack,
+        infer_aug_stack: augmentations.AugmentationStack,
+        readin: nn.ModuleList,
+        readout: nn.ModuleList,
+        loss_scale: float,
+        recon_reduce_mean: bool,
     ):
-        super().__init__(**kwargs)
+        super().__init__()
         self.name = area_name
-        self.com_dim = 100 # TODO
-        
-        # Create the mapping from ICs to gen_state
-        self.dropout = nn.Dropout(self.hparams.dropout_rate)
-        self.ic_to_g0 = nn.Linear(self.hparams.ic_dim, self.hparams.gen_dim)
-        init_linear_(self.ic_to_g0)
-        self.fac_linear = KernelNormalizedLinear(self.hparams.gen_dim, self.hparams.fac_dim, bias=False)
-        self.decoder = SRDecoder(self.decoder.hparams, com_dim=self.com_dim).float() # overwrite LFADS decoder # TODO com_dim
-        self.con_h0 = nn.Parameter(torch.zeros((1, self.hparams.con_dim), requires_grad=True))
+        self.save_hyperparameters(
+            ignore=["area_name", "ic_prior", "co_prior", "reconstruction", "readin", "readout"],
+        )
+        # Store `co_prior` on `hparams` so it can be accessed in decoder
+        self.hparams.co_prior = co_prior
+        # Make sure the nn.ModuleList arguments are all the same length
+        assert len(readin) == len(readout) == len(reconstruction)
+        # Make sure that non-variational models use null priors
+        if not variational:
+            assert isinstance(ic_prior, Null) and isinstance(co_prior, Null)
+
+        self.use_con = all([ci_enc_dim > 0, con_dim > 0, co_dim > 0])
+        self.readin = readin
+        self.encoder = Encoder(self.hparams)
+        self.decoder = SRDecoder(self.hparams)
+        self.icsampler = ICSampler(self.hparams, ic_prior)
+        self.readout = readout
+        self.recon = reconstruction
+        self.co_prior = co_prior
+        self.valid_recon_smth = ExpSmoothedMetric(coef=0.3)
+        self.train_aug_stack = train_aug_stack
+        self.infer_aug_stack = infer_aug_stack
     
     def forward(self): raise NotImplementedError
-
-    def encode(self,
-        batch: dict,
-        sample_posteriors: bool,
-        sessions,
-        ):
-        # Pass the data through the readin networks
-        encod_data = torch.cat([self.readin[s](batch[s].encod_data[self.name]) for s in sessions]).float()
-        # Collect the external inputs
-        ext_input = torch.cat([batch[s].ext_input[self.name] for s in sessions])
-        # Pass the data through the encoders
-        ic_mean, ic_std, ci = self.encoder(encod_data)
-        # Create the posterior distribution over initial conditions
-        ic_post = self.ic_prior.make_posterior(ic_mean, ic_std)
-        # Choose to take a sample or to pass the mean
-        ic_samp = ic_post.rsample() if sample_posteriors else ic_mean
-        # Calculate initial generator state and pass it to the RNN with dropout rate
-        gen_init = self.ic_to_g0(ic_samp)
-        gen_init_drop = self.dropout(gen_init)
-        factor_init = self.fac_linear(gen_init_drop)
-        return (ic_mean, ic_std, ic_samp, gen_init_drop, factor_init), (ci,), (ext_input,)
 
     def decode(
         self,
@@ -487,9 +508,15 @@ class MRLFADS(pl.LightningModule):
         # Run encode
         for area_name in self.areas.keys():
             area = self.areas[area_name]
-            (ic_mean, ic_std, ic_samp, gen_init_drop, factor_init), (ci,), (ext_input,) = area.encode(batch, sample_posteriors, sessions)
-            # TODO: save this
-            dec_rnn_input = torch.cat([ci, ext_input], dim=2) # not ext_input_drop anymore
+            
+            # encoder --> icsampler --> obtain inits and ci (controller input) # TODO: save this
+            encod_data = torch.cat([self.readin[s](batch[s].encod_data[area.name]) for s in sessions])
+            ext_input = torch.cat([batch[s].ext_input[area.name] for s in sessions])
+            ic_mean, ic_std, ci = area.encoder(encod_data)
+            gen_init, factor_init, con_init = area.icsampler(ic_mean, ic_std)
+            
+            # TODO: 
+            dec_rnn_input = torch.cat([ci, ext_input], dim=2)
             dec_rnn_input = torch.transpose(dec_rnn_input, 0, 1) # shape = (time, batch, num neurons)
             
         # Run decode
