@@ -12,7 +12,7 @@ from .modules.icsampler import ICSampler
 from .modules.l2 import compute_l2_penalty
 from .modules.priors import Null
 from .tuples import SessionBatch, SessionOutput, SaveVariables
-from .utils import transpose_lists
+from .utils import transpose_lists, get_insert_func
 
 class LFADS(pl.LightningModule):
     def __init__(
@@ -418,7 +418,7 @@ class SRLFADS(nn.Module):
         self.encoder = Encoder(self.hparams)
         self.decoder = SRDecoder(self.hparams)
         self.icsampler = ICSampler(self.hparams, ic_prior)
-        self.communicator = Communicator(self.hparams)
+        self.communicator = communicator(self.hparams)
         self.readout = readout
         self.recon = reconstruction
         self.co_prior = co_prior
@@ -510,7 +510,7 @@ class MRLFADS(pl.LightningModule):
         
         # Run encode
         factor_cat = torch.zeros(batch_size, self.encod_seq_len, self.total_fac_dim)
-        for area_name in self.areas.keys():
+        for ia, area_name in enumerate(self.areas.keys()):
             area = self.areas[area_name]
             
             # readin --> encoder --> ic_and_input
@@ -523,15 +523,16 @@ class MRLFADS(pl.LightningModule):
             self.save_var[area_name].states[:,0,:] = state
             self.save_var[area_name].inputs[..., :area.hparams.ci_enc_dim] = ci
             self.save_var[area_name].ic_params = torch.cat([ic_mean, ic_std], dim=1)
-            factor_cat = NotImplemented
+            self.insert_factor(factor_cat, factor_init, ia)
             
         # Run decode
         for t in range(self.recon_seq_len):
-            for area_name in self.areas.keys():
+            for ia, area_name in enumerate(self.areas.keys()):
                 area = self.areas[area_name]
                 
                 # communicator
-                com_samp, com_params = area.communicator(self.save_var[area_name].factor_state[:,t,:])
+                factor_compliment = self.exclude_factor(factor_cat, ia)
+                com_samp, com_params = area.communicator(factor_compliment)
                 self.save_var[area_name].inputs[:, t, area.hparams.ci_enc_dim:] = com_samp
                 self.save_var[area_name].com_params[:,t,:] = com_params
                 
@@ -591,10 +592,11 @@ class MRLFADS(pl.LightningModule):
             
     def _build_save_var(self, batch_size):
         self.save_var = {}
+        fac_dims = []
         for area_name in self.area_names:
-            hps = self.areas.[area_name].hparams
+            hps = self.areas[area_name].hparams
             self.save_var[area_name] = SaveVariables(
-                states = torch.zeros(batch_size, self.recon_seq_len, hps.con_dim + hps.gen_dim + hps.factor_dim),
+                states = torch.zeros(batch_size, self.recon_seq_len, hps.con_dim + hps.gen_dim + hps.fac_dim),
                 inputs = torch.zeros(batch_size, self.recon_seq_len, hps.ci_enc_dim + hps.com_dim),
                 outputs = torch.zeros(batch_size, self.recon_seq_len, hps.encod_data_dim),
                 
@@ -602,3 +604,5 @@ class MRLFADS(pl.LightningModule):
                 co_params = torch.zeros(batch_size, self.encod_seq_len, 2 * hps.co_dim),
                 com_params = torch.zeros(batch_size, self.encod_seq_len, 2 * hps.com_dim),   
             )
+            fac_dims.append(hps.fac_dim)
+        self.insert_factor, self.exclude_factor = get_insert_func(fac_dims)

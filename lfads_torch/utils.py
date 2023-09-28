@@ -70,11 +70,27 @@ def get_insert_func(sizes):
     data_ends = np.cumsum(sizes)
     data_starts = np.insert(data_ends, 0, 0)[:-1]
     
-    def insert_tensor(tensor, data, index, axis=0):
-        axis_starts = [0, 0, 0]
-        axis_ends = [None, None, None]
-        axis_starts[axis] = data_starts[index]
-        axis_ends[axis] = data_ends[index]
-        tensor[axis_starts[0]:axis_ends[0], axis_starts[1]:axis_ends[1], axis_starts[2]:axis_ends[2]] = data
-    return insert_tensor
+    def insert_tensor(tensor, data, index):
+        start, end = data_starts[index], data_ends[index]
+        tensor[..., start:end] = data
+
+    def exclude_tensor(tensor, index):
+        start, end = data_starts[index], data_ends[index]
+        indices_to_include = torch.tensor(list(range(start)) + list(range(end, data_ends[-1])))
+        sliced_tensor = torch.index_select(tensor, dim=-1, index=indices_to_include)
+        return sliced_tensor
+
+    return insert_tensor, exclude_tensor
         
+# def get_insert_func(sizes):
+#     data_ends = np.cumsum(sizes)
+#     data_starts = np.insert(data_ends, 0, 0)[:-1]
+    
+#     def insert_tensor(tensor, data, index, axis=0):
+#         axis_starts = [0, 0, 0]
+#         axis_ends = [None, None, None]
+#         axis_starts[axis] = data_starts[index]
+#         axis_ends[axis] = data_ends[index]
+#         tensor[axis_starts[0]:axis_ends[0], axis_starts[1]:axis_ends[1], axis_starts[2]:axis_ends[2]] = data
+
+#     return insert_tensor
