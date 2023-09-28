@@ -1,3 +1,4 @@
+import torch
 from collections import namedtuple 
 from dataclasses import dataclass
 
@@ -30,7 +31,9 @@ SessionOutput = namedtuple(
 
 @dataclass
 class SaveVariables:
-    con_state = None
-    gen_state = None
-    factor_state = None
-    ci = None
+    states: torch.Tensor = torch.empty(0)
+    inputs: torch.Tensor = torch.empty(0)
+    outputs: torch.Tensor = torch.empty(0)
+    ic_params: torch.Tensor = torch.empty(0)
+    co_params: torch.Tensor = torch.empty(0)
+    com_params: torch.Tensor = torch.empty(0)

@@ -1,5 +1,7 @@
 import torch
 import torch.nn as nn
+from .initializers import init_linear_
+from .decoder import KernelNormalizedLinear
 
 class ICSampler(nn.Module):
     def __init__(self, hparams, ic_prior):
@@ -16,6 +18,7 @@ class ICSampler(nn.Module):
         self,
         ic_mean,
         ic_std,
+        sample_posteriors: bool = True,
     ):
         # Create the posterior distribution over initial conditions
         ic_post = self.ic_prior.make_posterior(ic_mean, ic_std)
@@ -25,6 +28,5 @@ class ICSampler(nn.Module):
         gen_init = self.ic_to_g0(ic_samp)
         gen_init_drop = self.dropout(gen_init)
         factor_init = self.fac_linear(gen_init_drop)
-        dec_rnn_input = torch.cat([ci, ext_input], dim=2)
         return self.con_h0, gen_init_drop, factor_init
         

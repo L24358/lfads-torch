@@ -164,7 +164,7 @@ class SRDecoder(nn.Module):
         self.hparams = hps = hparams
         # Create the generator
         self.gen_cell = ClippedGRUCell(
-            hps.ext_input_dim + hps.co_dim + com_dim, hps.gen_dim, clip_value=hps.cell_clip
+            hps.ext_input_dim + hps.co_dim + hps.com_dim, hps.gen_dim, clip_value=hps.cell_clip
         )
         # Create the mapping from generator states to factors
         self.fac_linear = KernelNormalizedLinear(hps.gen_dim, hps.fac_dim, bias=False)
@@ -195,7 +195,7 @@ class SRDecoder(nn.Module):
             hps.co_dim,
             hps.co_dim + hps.ext_input_dim,
             hps.fac_dim,
-            com_dim, # TODO
+            hps.com_dim, 
         ]
         # Keep track of the input dimensions
         self.input_dims = [2 * hps.ci_enc_dim, hps.ext_input_dim]
