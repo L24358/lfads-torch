@@ -1,4 +1,5 @@
 _target_: lfads_torch.model.MRLFADS
+total_fac_dim: 200
 areas_info:
     SMA5:
         # --------- architecture --------- #
@@ -23,6 +24,12 @@ areas_info:
             - _target_: lfads_torch.modules.readin_readout.FanInLinear
               in_features: ${model.areas_info.SMA5.fac_dim}
               out_features: 182
+        communicator:
+          _target_: torch.nn.ModuleList
+          modules:
+            - _target_: lfads_torch.modules.readin_readout.FanInLinear
+              in_features: ${model.total_fac_dim - model.areas_info.SMA5.fac_dim}
+              out_features: ${model.areas_info.SMA5.com_dim}
 
         # --------- augmentation --------- #
         train_aug_stack:

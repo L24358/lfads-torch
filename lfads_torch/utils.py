@@ -1,5 +1,6 @@
 import hydra
 import torch
+import numpy as np
 from omegaconf import DictConfig
 from typing import List
 from .tuples import SessionBatch
@@ -64,3 +65,16 @@ def get_paths():
     hydra.initialize(config_path="../configs")
     cfg = hydra.compose(config_name="paths")
     return cfg
+
+def get_insert_func(sizes):
+    data_ends = np.cumsum(sizes)
+    data_starts = np.insert(data_ends, 0, 0)[:-1]
+    
+    def insert_tensor(tensor, data, index, axis=0):
+        axis_starts = [0, 0, 0]
+        axis_ends = [None, None, None]
+        axis_starts[axis] = data_starts[index]
+        axis_ends[axis] = data_ends[index]
+        tensor[axis_starts[0]:axis_ends[0], axis_starts[1]:axis_ends[1], axis_starts[2]:axis_ends[2]] = data
+    return insert_tensor
+        
