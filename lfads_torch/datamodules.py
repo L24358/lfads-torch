@@ -256,6 +256,7 @@ class MesoMapDataModule(pl.LightningDataModule):
         self,
         subject_id: int,
         session_idx: Union[int, str],
+        area_names: list,
         batch_size: int = 16,
         p_split: list = [0.85, 0.15],
     ):
@@ -277,7 +278,8 @@ class MesoMapDataModule(pl.LightningDataModule):
             self.val_session_datasets = []
             for si in session_idxs:
                 group = file[session_names[si]]
-                dataset_names = [key for key in group.keys() if "area-" in key]
+                dataset_names = [f"area-{key}" for key in hps.area_names]
+                # dataset_names = [key for key in group.keys() if "area-" in key]
 
                 # Filter data by photostim_onset
                 filter1 = group["photostim_onset"][:]
@@ -291,6 +293,7 @@ class MesoMapDataModule(pl.LightningDataModule):
                     assert ds.attrs.get("type") == "data"
                     
                     arr = ds[:][included_batches]
+                    arr = np.swapaxes(arr, 1, 2)
                     for bi in range(batch_dim):
                         if dataset_name == dataset_names[0]: area_data_dict[bi] = {}
                         area_data_dict[bi][dataset_name.replace("area-", "")] = arr[bi]

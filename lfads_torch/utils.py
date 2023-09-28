@@ -77,7 +77,7 @@ def get_insert_func(sizes):
     def exclude_tensor(tensor, index):
         start, end = data_starts[index], data_ends[index]
         indices_to_include = torch.tensor(list(range(start)) + list(range(end, data_ends[-1]))).to(torch.int64)
-        sliced_tensor = torch.index_select(tensor, dim=-1, index=indices_to_include)
+        sliced_tensor = torch.index_select(tensor, dim=-1, index=indices_to_include.to(tensor.device))
         return sliced_tensor
 
     return insert_tensor, exclude_tensor

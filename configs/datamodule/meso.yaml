@@ -1,4 +1,7 @@
 _target_: lfads_torch.datamodules.MesoMapDataModule
 subject_id: 456774
 session_idx: 0
+area_names:
+    - SMA5
+    - FMN
 batch_size: 16

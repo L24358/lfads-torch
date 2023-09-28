@@ -8,6 +8,7 @@ from .metrics import ExpSmoothedMetric, r2_score, regional_bits_per_spike
 from .modules import augmentations
 from .modules.decoder import Decoder, SRDecoder
 from .modules.encoder import Encoder
+from .modules.communicator import Communicator
 from .modules.icsampler import ICSampler
 from .modules.l2 import compute_l2_penalty
 from .modules.priors import Null
@@ -372,16 +373,16 @@ class SRLFADS(nn.Module):
         reconstruction: nn.ModuleList,
         co_prior: nn.Module,
         ic_prior: nn.Module,
+        com_prior: nn.Module,
         readin: nn.ModuleList,
         readout: nn.ModuleList,
-        communicator: nn.ModuleList,
         **kwargs,
     ):
         super().__init__()
         
         hparam_keys = ["total_fac_dim", "encod_data_dim", "encod_seq_len", "recon_seq_len", "ext_input_dim", "ic_enc_seq_len",
                        "ic_enc_dim", "ci_enc_dim", "ci_lag", "con_dim", "co_dim", "ic_dim", "gen_dim", "fac_dim",
-                       "com_dim", "dropout_rate", "variational", "ic_post_var_min", "cell_clip", "loss_scale", "recon_reduce_mean",
+                       "com_dim", "dropout_rate", "variational", "ic_post_var_min", "m_post_var_min", "cell_clip", "loss_scale", "recon_reduce_mean",
                       "train_aug_stack", "val_aug_stack",]
         hparam_dict = {key: None for key in hparam_keys}
         hparam_dict.update(kwargs)
@@ -401,7 +402,7 @@ class SRLFADS(nn.Module):
         self.encoder = Encoder(self.hparams)
         self.decoder = SRDecoder(self.hparams)
         self.icsampler = ICSampler(self.hparams, ic_prior)
-        self.communicator = communicator
+        self.communicator = Communicator(self.hparams, com_prior)
         self.readout = readout
         self.recon = reconstruction
         self.valid_recon_smth = ExpSmoothedMetric(coef=0.3)
@@ -450,6 +451,7 @@ class MRLFADS(pl.LightningModule):
         total_fac_dim: int,
         encod_seq_len: int,
         recon_seq_len: int,
+        ic_enc_seq_len: int,
         lr_scheduler: bool,
         lr_init: float,
         lr_stop: float,
@@ -492,7 +494,7 @@ class MRLFADS(pl.LightningModule):
         self._build_save_var(batch_size)
         
         # Run encode
-        factor_cat = torch.zeros(batch_size, self.hparams.encod_seq_len, self.hparams.total_fac_dim)
+        factor_cat = torch.zeros(batch_size, self.hparams.encod_seq_len, self.hparams.total_fac_dim).to(self.device)
         for ia, area_name in enumerate(self.areas.keys()):
             area = self.areas[area_name]
             
@@ -516,6 +518,7 @@ class MRLFADS(pl.LightningModule):
                 # communicator
                 factor_compliment = self.exclude_factor(factor_cat[:,t,:], ia)
                 com_samp, com_params = area.communicator(factor_compliment)
+                import pdb; pdb.set_trace()
                 self.save_var[area_name].inputs[:, t, area.hparams.ci_enc_dim:] = com_samp
                 self.save_var[area_name].com_params[:,t,:] = com_params
                 
@@ -564,7 +567,7 @@ class MRLFADS(pl.LightningModule):
 
     def _build_areas(self, areas_info):
         # MR hyperparameters to copy into SR hyperparameters
-        hps_to_copy = ["encod_seq_len", "recon_seq_len", "total_fac_dim"]
+        hps_to_copy = ["encod_seq_len", "recon_seq_len", "total_fac_dim", "ic_enc_seq_len"]
         mr_hps_dict = {key: self.hparams[key] for key in hps_to_copy}
         
         # Build all SR-LFADS instances
@@ -576,16 +579,17 @@ class MRLFADS(pl.LightningModule):
     def _build_save_var(self, batch_size):
         self.save_var = {}
         fac_dims = []
+        target_len = self.hparams.encod_seq_len - self.hparams.ic_enc_seq_len
         for area_name in self.area_names:
             hps = self.areas[area_name].hparams
             self.save_var[area_name] = SaveVariables(
-                states = torch.zeros(batch_size, hps.recon_seq_len, hps.con_dim + hps.gen_dim + hps.fac_dim),
-                inputs = torch.zeros(batch_size, hps.recon_seq_len, 2 * hps.ci_enc_dim + hps.com_dim), # TODO
-                outputs = torch.zeros(batch_size, hps.recon_seq_len, hps.encod_data_dim),
+                states = torch.zeros(batch_size, target_len, hps.con_dim + hps.gen_dim + hps.fac_dim),
+                inputs = torch.zeros(batch_size, target_len, hps.ci_enc_dim + hps.com_dim),
+                outputs = torch.zeros(batch_size, target_len, hps.encod_data_dim),
                 
                 ic_params = torch.zeros(batch_size, 2 * hps.ic_dim),
-                co_params = torch.zeros(batch_size, hps.encod_seq_len, 2 * hps.co_dim),
-                com_params = torch.zeros(batch_size, hps.encod_seq_len, 2 * hps.com_dim),   
+                co_params = torch.zeros(batch_size, target_len, 2 * hps.co_dim),
+                com_params = torch.zeros(batch_size, target_len, 2 * hps.com_dim),   
             )
             fac_dims.append(hps.fac_dim)
         self.insert_factor, self.exclude_factor = get_insert_func(fac_dims)

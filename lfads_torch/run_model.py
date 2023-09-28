@@ -14,7 +14,7 @@ from ray import tune
 from .utils import flatten
 
 OmegaConf.register_new_resolver("relpath", lambda p: Path(__file__).parent / ".." / p)
-
+OmegaConf.register_new_resolver("eval", eval)
 
 def run_model(
     overrides: dict = {},

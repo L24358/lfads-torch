@@ -7,7 +7,7 @@ from .recurrent import BidirectionalClippedGRU
 
 
 class Encoder(nn.Module):
-    def __init__(self, hparams: dict):
+    def __init__(self, hparams: dict, rnn_type = BidirectionalClippedGRU):
         super().__init__()
         self.hparams = hps = hparams
 
@@ -16,7 +16,7 @@ class Encoder(nn.Module):
             torch.zeros((2, 1, hps.ic_enc_dim), requires_grad=True)
         )
         # Initial condition encoder
-        self.ic_enc = BidirectionalClippedGRU(
+        self.ic_enc = rnn_type(
             input_size=hps.encod_data_dim,
             hidden_size=hps.ic_enc_dim,
             clip_value=hps.cell_clip,
@@ -38,7 +38,7 @@ class Encoder(nn.Module):
                 torch.zeros((2, 1, hps.ci_enc_dim), requires_grad=True)
             )
             # CI encoder
-            self.ci_enc = BidirectionalClippedGRU(
+            self.ci_enc = rnn_type(
                 input_size=hps.encod_data_dim,
                 hidden_size=hps.ci_enc_dim,
                 clip_value=hps.cell_clip,
