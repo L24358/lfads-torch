@@ -7,7 +7,7 @@ from typing import Dict, List
 from .metrics import ExpSmoothedMetric, r2_score, regional_bits_per_spike
 from .modules import augmentations
 from .modules.decoder import Decoder, SRDecoder
-from .modules.encoder import Encoder
+from .modules.encoder import Encoder, SREncoder
 from .modules.communicator import Communicator
 from .modules.icsampler import ICSampler
 from .modules.l2 import compute_l2_penalty
@@ -399,7 +399,7 @@ class SRLFADS(nn.Module):
         # Set up model components
         self.use_con = all([self.hparams.ci_enc_dim > 0, self.hparams.con_dim > 0, self.hparams.co_dim > 0])
         self.readin = readin
-        self.encoder = Encoder(self.hparams)
+        self.encoder = SREncoder(self.hparams)
         self.decoder = SRDecoder(self.hparams)
         self.icsampler = ICSampler(self.hparams, ic_prior)
         self.communicator = Communicator(self.hparams, com_prior)
@@ -506,7 +506,7 @@ class MRLFADS(pl.LightningModule):
             # Save the results
             state = torch.cat([torch.tile(con_init, (batch_size, 1)), gen_init, factor_init], axis=1)
             self.save_var[area_name].states[:,0,:] = state
-            self.save_var[area_name].inputs[..., : 2 * area.hparams.ci_enc_dim] = ci # TODO
+            self.save_var[area_name].inputs[..., :area.hparams.ci_enc_dim] = ci # TODO
             self.save_var[area_name].ic_params = torch.cat([ic_mean, ic_std], dim=1)
             self.insert_factor(factor_cat[:,0,:], factor_init, ia)
             
@@ -518,13 +518,13 @@ class MRLFADS(pl.LightningModule):
                 # communicator
                 factor_compliment = self.exclude_factor(factor_cat[:,t,:], ia)
                 com_samp, com_params = area.communicator(factor_compliment)
-                import pdb; pdb.set_trace()
                 self.save_var[area_name].inputs[:, t, area.hparams.ci_enc_dim:] = com_samp
                 self.save_var[area_name].com_params[:,t,:] = com_params
                 
                 # decoder
                 states = self.save_var[area_name].states[:,t,:]
                 inputs = self.save_var[area_name].states[:,t,:]
+                import pdb; pdb.set_trace()
                 new_state, co_params = area.decoder(states[:,t,:], inputs[:,t,:])
                 self.save_var[area_name].states[:,t,:] = new_state
                 self.save_var[area_name].co_params[:,t,:] = co_params
