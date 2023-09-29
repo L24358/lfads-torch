@@ -383,7 +383,7 @@ class SRLFADS(nn.Module):
         hparam_keys = ["total_fac_dim", "encod_data_dim", "encod_seq_len", "recon_seq_len", "ext_input_dim", "ic_enc_seq_len",
                        "ic_enc_dim", "ci_enc_dim", "ci_lag", "con_dim", "co_dim", "ic_dim", "gen_dim", "fac_dim",
                        "com_dim", "dropout_rate", "variational", "ic_post_var_min", "m_post_var_min", "cell_clip", "loss_scale", "recon_reduce_mean",
-                      "train_aug_stack", "val_aug_stack",]
+                      "train_aug_stack", "infer_aug_stack",]
         hparam_dict = {key: None for key in hparam_keys}
         hparam_dict.update(kwargs)
         self.hparams = HParams(hparam_dict)
@@ -533,9 +533,23 @@ class MRLFADS(pl.LightningModule):
                 # readout
                 rates = area.readout[session_idx](new_state[..., -area.hparams.fac_dim:])
                 self.save_var[area_name].outputs[:,t+1,:] = rates
+                
+    def _shared_step(self, batch, batch_idx, split):
+        sessions = sorted(batch.keys())
+        
+        batch_processed = []
+        for s in sessions:
+            session_batches = {}
+            for area_name, area in self.areas.items():
+                aug_stack = area.hparams.train_aug_stack if split == "train" else area.hparams.infer_aug_stack
+                session_batches[area_name] = aug_stack.process_batch(batch[s][area_name])
+            batch_processed.append(session_batches)
+        self.forward(
+            batch, sample_posteriors=hps.variational, output_means=False
+        )
 
     def training_step(self, batch, batch_idx):
-        self(batch)
+        self._shared_step(batch, batch_idx, "train")
     
     def configure_optimizers(self):
         hps = self.hparams
