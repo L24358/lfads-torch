@@ -498,10 +498,11 @@ class MRLFADS(pl.LightningModule):
         for ia, area_name in enumerate(self.areas.keys()):
             area = self.areas[area_name]
             
-            # readin --> encoder --> ic_and_input
+            # readin --> encoder --> ic_and_input, and rates
             encod_data = area.readin[session_idx](batch.encod_data[area_name])
             ic_mean, ic_std, ci = area.encoder(encod_data.float())
             con_init, gen_init, factor_init = area.icsampler(ic_mean, ic_std, sample_posteriors=sample_posteriors)
+            rates_init = area.readout[session_idx](factor_init)
             
             # Save the results
             state = torch.cat([torch.tile(con_init, (batch_size, 1)), gen_init, factor_init], axis=1)
@@ -509,29 +510,29 @@ class MRLFADS(pl.LightningModule):
             self.save_var[area_name].inputs[..., :area.hparams.ci_enc_dim] = ci # TODO
             self.save_var[area_name].ic_params = torch.cat([ic_mean, ic_std], dim=1)
             self.insert_factor(factor_cat[:,0,:], factor_init, ia)
+            self.save_var[area_name].outputs[:,0,:] = rates_init
             
         # Run decode
-        for t in range(self.hparams.recon_seq_len):
+        for t in range(self.hparams.recon_seq_len - 1):
             for ia, area_name in enumerate(self.areas.keys()):
                 area = self.areas[area_name]
                 
                 # communicator
                 factor_compliment = self.exclude_factor(factor_cat[:,t,:], ia)
                 com_samp, com_params = area.communicator(factor_compliment)
-                self.save_var[area_name].inputs[:, t, area.hparams.ci_enc_dim:] = com_samp
-                self.save_var[area_name].com_params[:,t,:] = com_params
+                self.save_var[area_name].inputs[:, t+1, area.hparams.ci_enc_dim:] = com_samp
+                self.save_var[area_name].com_params[:,t+1,:] = com_params
                 
                 # decoder
                 states = self.save_var[area_name].states[:,t,:]
-                inputs = self.save_var[area_name].states[:,t,:]
-                import pdb; pdb.set_trace()
-                new_state, co_params = area.decoder(states[:,t,:], inputs[:,t,:])
-                self.save_var[area_name].states[:,t,:] = new_state
-                self.save_var[area_name].co_params[:,t,:] = co_params
+                inputs = self.save_var[area_name].inputs[:,t,:]
+                new_state, co_params = area.decoder(inputs, states)
+                self.save_var[area_name].states[:,t+1,:] = new_state
+                self.save_var[area_name].co_params[:,t+1,:] = co_params
                 
                 # readout
-                rates = area.readout(new_state[..., -area.fac_dim:])
-                self.save_var[area_name].outputs[:,t,:] = rates
+                rates = area.readout[session_idx](new_state[..., -area.hparams.fac_dim:])
+                self.save_var[area_name].outputs[:,t+1,:] = rates
 
     def training_step(self, batch, batch_idx):
         self(batch)
@@ -583,13 +584,13 @@ class MRLFADS(pl.LightningModule):
         for area_name in self.area_names:
             hps = self.areas[area_name].hparams
             self.save_var[area_name] = SaveVariables(
-                states = torch.zeros(batch_size, target_len, hps.con_dim + hps.gen_dim + hps.fac_dim),
-                inputs = torch.zeros(batch_size, target_len, hps.ci_enc_dim + hps.com_dim),
-                outputs = torch.zeros(batch_size, target_len, hps.encod_data_dim),
+                states = torch.zeros(batch_size, target_len, hps.con_dim + hps.gen_dim + hps.fac_dim).to(self.device),
+                inputs = torch.zeros(batch_size, target_len, hps.ci_enc_dim + hps.com_dim).to(self.device),
+                outputs = torch.zeros(batch_size, target_len, hps.encod_data_dim).to(self.device),
                 
-                ic_params = torch.zeros(batch_size, 2 * hps.ic_dim),
-                co_params = torch.zeros(batch_size, target_len, 2 * hps.co_dim),
-                com_params = torch.zeros(batch_size, target_len, 2 * hps.com_dim),   
+                ic_params = torch.zeros(batch_size, 2 * hps.ic_dim).to(self.device),
+                co_params = torch.zeros(batch_size, target_len, 2 * hps.co_dim).to(self.device),
+                com_params = torch.zeros(batch_size, target_len, 2 * hps.com_dim).to(self.device),   
             )
             fac_dims.append(hps.fac_dim)
         self.insert_factor, self.exclude_factor = get_insert_func(fac_dims)
