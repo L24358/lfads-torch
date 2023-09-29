@@ -273,14 +273,17 @@ class MesoMapDataModule(pl.LightningDataModule):
             session_names = list(file.keys())
             if hps.session_idx == "all": session_idxs = list(range(len(session_names)))
             else: session_idxs = [hps.session_idx]
+            
+            # Only retain sessions according to available keys
+            dataset_names = [f"area-{key}" for key in hps.area_names]
+            session_idxs = [si for si in session_idxs if
+                           np.all([dsname in file[session_names[si]].keys() for dsname in dataset_names])]
 
             self.train_session_datasets = []
             self.val_session_datasets = []
             for si in session_idxs:
                 group = file[session_names[si]]
-                dataset_names = [f"area-{key}" for key in hps.area_names]
-                # dataset_names = [key for key in group.keys() if "area-" in key]
-
+                
                 # Filter data by photostim_onset
                 filter1 = group["photostim_onset"][:]
                 included_batches = np.where(filter1 == b"N/A")[0]
@@ -289,14 +292,15 @@ class MesoMapDataModule(pl.LightningDataModule):
                 # Turn data into dictionary, then SessionAreaDataset
                 area_data_dict = {}
                 for dataset_name in dataset_names:
+                    area_name = dataset_name.replace("area-", "")
                     ds = group[dataset_name]
                     assert ds.attrs.get("type") == "data"
-                    
+
                     arr = ds[:][included_batches]
                     arr = np.swapaxes(arr, 1, 2)
                     for bi in range(batch_dim):
                         if dataset_name == dataset_names[0]: area_data_dict[bi] = {}
-                        area_data_dict[bi][dataset_name.replace("area-", "")] = arr[bi]
+                        area_data_dict[bi][area_name] = arr[bi]
                 session_dataset = SessionAreaDataset(area_data_dict)
                 train_ds, val_ds = random_split(session_dataset, hps.p_split)
                 self.train_session_datasets.append(train_ds)

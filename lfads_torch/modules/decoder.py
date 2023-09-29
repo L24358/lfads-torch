@@ -215,7 +215,7 @@ class SRDecoder(nn.Module):
             # Compute the distribution of the controller outputs at this timestep
             co_params = self.co_linear(con_state)
             co_mean, co_logvar = torch.split(co_params, hps.co_dim, dim=1)
-            co_std = torch.sqrt(torch.exp(co_logvar))
+            co_std = torch.sqrt(torch.exp(co_logvar) + hps.co_post_var_min)
             # Sample from the distribution of controller outputs
             co_post = self.hparams.co_prior.make_posterior(co_mean, co_std)
             con_output = co_post.rsample() if sample_posteriors else co_mean
@@ -230,4 +230,4 @@ class SRDecoder(nn.Module):
         factor = self.fac_linear(gen_state_drop)
         
         hidden = torch.cat([con_state, gen_state, factor], dim=1)
-        return hidden, co_params
+        return hidden, torch.cat([co_mean, co_std], dim=1)

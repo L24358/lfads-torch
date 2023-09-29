@@ -20,5 +20,5 @@ class Communicator(nn.Module):
         m_std = torch.sqrt(torch.exp(m_logvar) + self.hparams.m_post_var_min)
         m_post = self.com_prior.make_posterior(m_mean, m_std)
         m_samp = m_post.rsample() if sample_posteriors else m_mean
-        return m_samp, m_params
+        return m_samp, torch.cat([m_mean, m_std], dim=1)
         

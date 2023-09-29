@@ -6,6 +6,19 @@ encod_seq_len: 500
 recon_seq_len: 500
 ic_enc_seq_len: 50
 
+# --------- augmentation --------- #
+train_aug_stack:
+  _target_: lfads_torch.modules.augmentations.AugmentationStack
+  transforms:
+    - _target_: lfads_torch.modules.augmentations.AreaCoordinatedDropout
+      cd_rate: 0.3
+      cd_pass_rate: 0.0
+      ic_enc_seq_len: ${model.ic_enc_seq_len}
+  batch_order: [0]
+  loss_order: [0]
+infer_aug_stack:
+  _target_: lfads_torch.modules.augmentations.AugmentationStack
+
 # --------- learning rate --------- #
 lr_init: 4.0e-3
 lr_stop: 1.0e-5
@@ -28,6 +41,14 @@ kl_start_epoch: 0
 kl_increase_epoch: 80
 kl_ic_scale: 1.0e-7
 kl_co_scale: 1.0e-7
+kl_com_scale: 1.0e-7
+
+# --------- misc --------- #
+variational: True
+loss_scale: 1.0e+4
+recon_reduce_mean: True
+dropout_rate: 0.3
+cell_clip: 5.0
 
 # --------- area specification --------- #
 areas_info:
@@ -54,28 +75,10 @@ areas_info:
             - _target_: lfads_torch.modules.readin_readout.FanInLinear
               in_features: ${model.areas_info.SMA5.fac_dim}
               out_features: 34
-        # communicator:
-        #   _target_: lfads_torch.modules.readin_readout.FanInLinear
-        #   in_features: ${eval:'${model.total_fac_dim} - ${model.areas_info.SMA5.fac_dim}'}
-        #   out_features: ${model.areas_info.SMA5.com_dim}
-
-        # --------- augmentation --------- #
-        train_aug_stack:
-          _target_: lfads_torch.modules.augmentations.AugmentationStack
-          transforms:
-            - _target_: lfads_torch.modules.augmentations.CoordinatedDropout
-              cd_rate: 0.3
-              cd_pass_rate: 0.0
-              ic_enc_seq_len: ${model.ic_enc_seq_len}
-          batch_order: [0]
-          loss_order: [0]
-        infer_aug_stack:
-          _target_: lfads_torch.modules.augmentations.AugmentationStack
 
         # --------- priors / posteriors --------- #
         reconstruction:
           - _target_: lfads_torch.modules.recons.Poisson
-        variational: True
         co_prior:
           _target_: lfads_torch.modules.priors.MultivariateNormal
           mean: 0
@@ -92,13 +95,8 @@ areas_info:
           variance: 0.1
           shape: ${model.areas_info.SMA5.com_dim}
         ic_post_var_min: 1.0e-4
+        co_post_var_min: 1.0e-4
         m_post_var_min: 1.0e-4
-
-        # --------- misc --------- #
-        dropout_rate: 0.3
-        cell_clip: 5.0
-        loss_scale: 1.0e+4
-        recon_reduce_mean: True
         
     FMN:
         # --------- architecture --------- #
@@ -123,30 +121,10 @@ areas_info:
             - _target_: lfads_torch.modules.readin_readout.FanInLinear
               in_features: ${model.areas_info.FMN.fac_dim}
               out_features: 16
-        # communicator:
-        #   _target_: torch.nn.ModuleList
-        #   modules:
-        #     - _target_: lfads_torch.modules.readin_readout.FanInLinear
-        #       in_features: ${eval:'${model.total_fac_dim} - ${model.areas_info.FMN.fac_dim}'}
-        #       out_features: ${model.areas_info.FMN.com_dim}
-
-        # --------- augmentation --------- #
-        train_aug_stack:
-          _target_: lfads_torch.modules.augmentations.AugmentationStack
-          transforms:
-            - _target_: lfads_torch.modules.augmentations.CoordinatedDropout
-              cd_rate: 0.3
-              cd_pass_rate: 0.0
-              ic_enc_seq_len: ${model.ic_enc_seq_len}
-          batch_order: [0]
-          loss_order: [0]
-        infer_aug_stack:
-          _target_: lfads_torch.modules.augmentations.AugmentationStack
 
         # --------- priors / posteriors --------- #
         reconstruction:
           - _target_: lfads_torch.modules.recons.Poisson
-        variational: True
         co_prior:
           _target_: lfads_torch.modules.priors.MultivariateNormal
           mean: 0
@@ -163,11 +141,6 @@ areas_info:
           variance: 0.1
           shape: ${model.areas_info.FMN.com_dim}
         ic_post_var_min: 1.0e-4
+        co_post_var_min: 1.0e-4
         m_post_var_min: 1.0e-4
-
-        # --------- misc --------- #
-        dropout_rate: 0.3
-        cell_clip: 5.0
-        loss_scale: 1.0e+4
-        recon_reduce_mean: True
 

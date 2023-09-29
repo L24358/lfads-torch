@@ -1,4 +1,4 @@
-_target_: lfads_torch.model.LFADS
+d_target_: lfads_torch.model.LFADS
 
 # --------- architecture --------- #
 encod_data_dim: ${model.fac_dim}

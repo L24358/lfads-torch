@@ -10,7 +10,7 @@ from .modules.decoder import Decoder, SRDecoder
 from .modules.encoder import Encoder, SREncoder
 from .modules.communicator import Communicator
 from .modules.icsampler import ICSampler
-from .modules.l2 import compute_l2_penalty
+from .modules.l2 import compute_l2_penalty, sr_compute_l2_penalty
 from .modules.priors import Null
 from .tuples import SessionBatch, SessionOutput, SaveVariables
 from .utils import transpose_lists, get_insert_func, HParams
@@ -101,7 +101,7 @@ class LFADS(pl.LightningModule):
         batch,
         sample_posteriors: bool = False,
         output_means: bool = True,
-    ):
+    ):        
         # Allow SessionBatch input
         if type(batch) == SessionBatch and len(self.readin) == 1:
             batch = {0: batch}
@@ -119,6 +119,7 @@ class LFADS(pl.LightningModule):
         ic_post = self.ic_prior.make_posterior(ic_mean, ic_std)
         # Choose to take a sample or to pass the mean
         ic_samp = ic_post.rsample() if sample_posteriors else ic_mean
+        
         # Unroll the decoder to estimate latent states
         (
             gen_init,
@@ -382,8 +383,7 @@ class SRLFADS(nn.Module):
         
         hparam_keys = ["total_fac_dim", "encod_data_dim", "encod_seq_len", "recon_seq_len", "ext_input_dim", "ic_enc_seq_len",
                        "ic_enc_dim", "ci_enc_dim", "ci_lag", "con_dim", "co_dim", "ic_dim", "gen_dim", "fac_dim",
-                       "com_dim", "dropout_rate", "variational", "ic_post_var_min", "m_post_var_min", "cell_clip", "loss_scale", "recon_reduce_mean",
-                      "train_aug_stack", "infer_aug_stack",]
+                       "com_dim", "dropout_rate", "ic_post_var_min", "m_post_var_min", "cell_clip"]
         hparam_dict = {key: None for key in hparam_keys}
         hparam_dict.update(kwargs)
         self.hparams = HParams(hparam_dict)
@@ -405,7 +405,9 @@ class SRLFADS(nn.Module):
         self.communicator = Communicator(self.hparams, com_prior)
         self.readout = readout
         self.recon = reconstruction
-        self.valid_recon_smth = ExpSmoothedMetric(coef=0.3)
+        self.ic_prior = ic_prior
+        self.co_prior = co_prior
+        self.com_prior = com_prior
     
     def forward(self): raise NotImplementedError
 
@@ -452,6 +454,8 @@ class MRLFADS(pl.LightningModule):
         encod_seq_len: int,
         recon_seq_len: int,
         ic_enc_seq_len: int,
+        train_aug_stack: augmentations.AugmentationStack,
+        infer_aug_stack: augmentations.AugmentationStack,
         lr_scheduler: bool,
         lr_init: float,
         lr_stop: float,
@@ -471,11 +475,18 @@ class MRLFADS(pl.LightningModule):
         kl_increase_epoch: int,
         kl_ic_scale: float,
         kl_co_scale: float,
+        kl_com_scale: float,
+        variational: bool,
+        loss_scale: float,
+        recon_reduce_mean: bool,
+        dropout_rate: float,
+        cell_clip: float,
     ):
         super().__init__()
         self.save_hyperparameters(
             ignore = ["areas_info"]
         )
+        self.valid_recon_smth = ExpSmoothedMetric(coef=0.3)
 
         # Build all the areas (SR-LFADS)
         self.area_names = list(areas_info.keys())
@@ -484,72 +495,183 @@ class MRLFADS(pl.LightningModule):
     def forward(
         self,
         batch: dict,
-        session_idx: int = 0,
         sample_posteriors: bool = False,
         output_means: bool = True,
     ):
-        # Preprocess session and setup save_var
-        batch = batch[session_idx]
-        batch_size = batch.encod_data[self.area_names[0]].size(0)
+        # Calculate total batch_size
+        sessions = sorted(batch.keys())
+        batch_sizes = [batch[s].encod_data[self.area_names[0]].size(0) for s in sessions]
+        batch_size = sum(batch_sizes)
         self._build_save_var(batch_size)
         
         # Run encode
-        factor_cat = torch.zeros(batch_size, self.hparams.encod_seq_len, self.hparams.total_fac_dim).to(self.device)
+        factor_cat = torch.zeros(batch_size, self.hparams.total_fac_dim).to(self.device)
         for ia, area_name in enumerate(self.areas.keys()):
             area = self.areas[area_name]
             
             # readin --> encoder --> ic_and_input, and rates
-            encod_data = area.readin[session_idx](batch.encod_data[area_name])
+            encod_data = torch.cat([area.readin[s](batch[s].encod_data[area_name]) for s in sessions])
             ic_mean, ic_std, ci = area.encoder(encod_data.float())
             con_init, gen_init, factor_init = area.icsampler(ic_mean, ic_std, sample_posteriors=sample_posteriors)
-            rates_init = area.readout[session_idx](factor_init)
+            factor_init_split = torch.split(factor_init, batch_sizes, dim=0)
+            rates_init = torch.cat([area.readout[s](factor_init_split[s]) for s in sessions], dim=0)
             
             # Save the results
-            state = torch.cat([torch.tile(con_init, (batch_size, 1)), gen_init, factor_init], axis=1)
-            self.save_var[area_name].states[:,0,:] = state
-            self.save_var[area_name].inputs[..., :area.hparams.ci_enc_dim] = ci # TODO
+            state = torch.cat([torch.tile(con_init, (batch_size, 1)), gen_init, factor_init], dim=1)
+            self.save_var[area_name].states[:,0,:] = state # this is discarded afterwards
+            self.save_var[area_name].inputs[..., :area.hparams.ci_enc_dim] = ci
             self.save_var[area_name].ic_params = torch.cat([ic_mean, ic_std], dim=1)
-            self.insert_factor(factor_cat[:,0,:], factor_init, ia)
-            self.save_var[area_name].outputs[:,0,:] = rates_init
+            self.insert_factor(factor_cat, factor_init, ia)
             
         # Run decode
-        for t in range(self.hparams.recon_seq_len - 1):
+        for t in range(self.hparams.recon_seq_len - self.hparams.ic_enc_seq_len):
+            
+            factor_cat = torch.zeros(batch_size, self.hparams.total_fac_dim).to(self.device)
+            
             for ia, area_name in enumerate(self.areas.keys()):
                 area = self.areas[area_name]
                 
                 # communicator
-                factor_compliment = self.exclude_factor(factor_cat[:,t,:], ia)
-                com_samp, com_params = area.communicator(factor_compliment)
-                self.save_var[area_name].inputs[:, t+1, area.hparams.ci_enc_dim:] = com_samp
-                self.save_var[area_name].com_params[:,t+1,:] = com_params
+                factor_compliment = self.exclude_factor(factor_cat, ia)
+                com_samp, com_params = area.communicator(factor_compliment, sample_posteriors=sample_posteriors)
+                self.save_var[area_name].inputs[:, t, area.hparams.ci_enc_dim:] = com_samp
+                self.save_var[area_name].com_params[:,t,:] = com_params
                 
                 # decoder
                 states = self.save_var[area_name].states[:,t,:]
                 inputs = self.save_var[area_name].inputs[:,t,:]
-                new_state, co_params = area.decoder(inputs, states)
+                new_state, co_params = area.decoder(inputs, states, sample_posteriors=sample_posteriors)
                 self.save_var[area_name].states[:,t+1,:] = new_state
-                self.save_var[area_name].co_params[:,t+1,:] = co_params
+                self.save_var[area_name].co_params[:,t,:] = co_params
                 
                 # readout
-                rates = area.readout[session_idx](new_state[..., -area.hparams.fac_dim:])
-                self.save_var[area_name].outputs[:,t+1,:] = rates
+                factor_state = new_state[..., -area.hparams.fac_dim:]
+                factor_state_split = torch.split(factor_state, batch_sizes)
+                self.insert_factor(factor_cat, factor_state, ia)
+                rates = torch.cat([area.readout[s](factor_state_split[s]) for s in sessions], dim=0)
+                self.save_var[area_name].outputs[:,t,:] = rates
+                
+        # Post process states, remove the very first state
+        for area_name in self.area_names: self.save_var[area_name].states = self.save_var[area_name].states[:,1:,:]
                 
     def _shared_step(self, batch, batch_idx, split):
-        sessions = sorted(batch.keys())
+        hps = self.hparams
         
-        batch_processed = []
-        for s in sessions:
-            session_batches = {}
-            for area_name, area in self.areas.items():
-                aug_stack = area.hparams.train_aug_stack if split == "train" else area.hparams.infer_aug_stack
-                session_batches[area_name] = aug_stack.process_batch(batch[s][area_name])
-            batch_processed.append(session_batches)
+        # Process Augmentations
+        sessions = sorted(batch.keys())
+        aug_stack = self.hparams.train_aug_stack if split == "train" else self.hparams.infer_aug_stack
+        batch = {s: aug_stack.process_batch(batch[s]) for s in sessions}
+        batch_sizes = [batch[s].encod_data[self.area_names[0]].size(0) for s in sessions]
+        batch_size = sum(batch_sizes)
+        
+        # Forward pass
         self.forward(
-            batch, sample_posteriors=hps.variational, output_means=False
+            batch,
+            sample_posteriors=hps.variational,
+            output_means=False
         )
+        
+        # Compute ramping coefficients
+        l2_ramp = self._compute_ramp(hps.l2_start_epoch, hps.l2_increase_epoch)
+        kl_ramp = self._compute_ramp(hps.kl_start_epoch, hps.kl_increase_epoch)
+        
+        # Calculate all losses
+        mr_loss = 0
+        recon_start = hps.ic_enc_seq_len
+        for area_name, area in self.areas.items():
+            # Recon loss
+            rates_split = torch.split(self.save_var[area_name].outputs, batch_sizes)
+            recon_all = [area.recon[s].compute_loss(
+                batch[s].recon_data[area_name][:,recon_start:],
+                area.recon[s].reshape_output_params(rates_split[s]))
+                for s in sessions]
+            if not hps.recon_reduce_mean: recon_all = [torch.sum(ra, dim=(1, 2)) for ra in recon_all]
+            sess_recon = [ra.mean() for ra in recon_all]
+            recon = torch.mean(torch.stack(sess_recon))
+            
+            # L2 loss
+            l2 = sr_compute_l2_penalty(area, hps)
+            
+            # Collect posterior parameters for fast KL calculation
+            ic_mean, ic_std = torch.split(self.save_var[area_name].ic_params, area.hparams.ic_dim, dim=1)
+            co_mean, co_std = torch.split(self.save_var[area_name].co_params, area.hparams.co_dim, dim=2)
+            com_mean, com_std = torch.split(self.save_var[area_name].com_params, area.hparams.com_dim, dim=2)
+            ic_kl = area.ic_prior(ic_mean, ic_std) * hps.kl_ic_scale
+            co_kl = area.co_prior(co_mean, co_std) * hps.kl_co_scale
+            com_kl = area.com_prior(com_mean, com_std) * hps.kl_com_scale
+            
+            # Compute the final loss
+            sr_loss = hps.loss_scale * (recon + l2_ramp * l2 + kl_ramp * (ic_kl + co_kl))
+            mr_loss += sr_loss
+            
+        # Collect metrics for logging
+        metrics = {
+            f"{split}/loss": mr_loss,
+            f"{split}/recon": recon,
+            f"{split}/wt_l2": l2,
+            f"{split}/wt_l2/ramp": l2_ramp,
+            f"{split}/wt_kl": ic_kl + co_kl,
+            f"{split}/wt_kl/ic": ic_kl,
+            f"{split}/wt_kl/co": co_kl,
+            f"{split}/wt_kl/ramp": kl_ramp,
+        }
+        if split == "valid":
+            # Update the smoothed reconstruction loss
+            self.valid_recon_smth.update(recon, batch_size)
+            # Add validation-only metrics
+            metrics.update(
+                {
+                    "valid/recon_smth": self.valid_recon_smth,
+                    "hp_metric": recon,
+                    "cur_epoch": float(self.current_epoch),
+                }
+            )
+        # Log overall metrics
+        self.log_dict(
+            metrics,
+            on_step=False,
+            on_epoch=True,
+            batch_size=batch_size,
+        )
+        return mr_loss
 
     def training_step(self, batch, batch_idx):
         self._shared_step(batch, batch_idx, "train")
+        
+    def validation_step(self, batch, batch_idx):
+        self._shared_step(batch, batch_idx, "valid")
+        
+    def predict_step(self, batch, batch_ix, sample_posteriors=True):
+        sessions = sorted(batch.keys())
+        batch = {s: self.hparams.infer_aug_stack.process_batch(batch[s]) for s in sessions}
+        # Reset to clear any saved masks
+        self.hparams.infer_aug_stack.reset()
+        # Perform the forward pass
+        return self.forward(
+            batch=batch,
+            sample_posteriors=self.hparams.variational and sample_posteriors,
+            output_means=True,
+        )
+        
+    def on_validation_epoch_end(self):
+        # Log hyperparameters that may change during PBT
+        self.log_dict(
+            {
+                "hp/lr_init": self.hparams.lr_init,
+                "hp/dropout_rate": self.hparams.dropout_rate,
+                "hp/l2_ic_enc_scale": self.hparams.l2_ic_enc_scale,
+                "hp/l2_ci_enc_scale": self.hparams.l2_ci_enc_scale,
+                "hp/l2_gen_scale": self.hparams.l2_gen_scale,
+                "hp/l2_con_scale": self.hparams.l2_con_scale,
+                "hp/kl_co_scale": self.hparams.kl_co_scale,
+                "hp/kl_ic_scale": self.hparams.kl_ic_scale,
+                "hp/weight_decay": self.hparams.weight_decay,
+            }
+        )
+        # Log CD rate if CD is being used
+        for aug in self.hparams.train_aug_stack.batch_transforms:
+            if hasattr(aug, "cd_rate"):
+                self.log("hp/cd_rate", aug.cd_rate)
     
     def configure_optimizers(self):
         hps = self.hparams
@@ -582,7 +704,8 @@ class MRLFADS(pl.LightningModule):
 
     def _build_areas(self, areas_info):
         # MR hyperparameters to copy into SR hyperparameters
-        hps_to_copy = ["encod_seq_len", "recon_seq_len", "total_fac_dim", "ic_enc_seq_len"]
+        hps_to_copy = ["encod_seq_len", "recon_seq_len", "total_fac_dim", "ic_enc_seq_len", "variational",
+                      "dropout_rate", "cell_clip"]
         mr_hps_dict = {key: self.hparams[key] for key in hps_to_copy}
         
         # Build all SR-LFADS instances
@@ -598,9 +721,10 @@ class MRLFADS(pl.LightningModule):
         for area_name in self.area_names:
             hps = self.areas[area_name].hparams
             self.save_var[area_name] = SaveVariables(
-                states = torch.zeros(batch_size, target_len, hps.con_dim + hps.gen_dim + hps.fac_dim).to(self.device),
+                # states has 1 extra time in the beginning, will be removed in the end
+                states = torch.zeros(batch_size, target_len+1, hps.con_dim + hps.gen_dim + hps.fac_dim).to(self.device),
                 inputs = torch.zeros(batch_size, target_len, hps.ci_enc_dim + hps.com_dim).to(self.device),
-                outputs = torch.zeros(batch_size, target_len, hps.encod_data_dim).to(self.device),
+                outputs = torch.zeros(batch_size, target_len, hps.enco_data_dim).to(self.device),
                 
                 ic_params = torch.zeros(batch_size, 2 * hps.ic_dim).to(self.device),
                 co_params = torch.zeros(batch_size, target_len, 2 * hps.co_dim).to(self.device),
@@ -608,3 +732,8 @@ class MRLFADS(pl.LightningModule):
             )
             fac_dims.append(hps.fac_dim)
         self.insert_factor, self.exclude_factor = get_insert_func(fac_dims)
+        
+    def _compute_ramp(self, start, increase):
+        # Compute a coefficient that ramps from 0 to 1 over `increase` epochs
+        ramp = (self.current_epoch + 1 - start) / (increase + 1)
+        return torch.clamp(torch.tensor(ramp), 0, 1)

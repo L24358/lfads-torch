@@ -5,7 +5,6 @@ from torch import nn
 from .initializers import init_linear_
 from .recurrent import BidirectionalClippedGRU, ClippedGRU
 
-
 class Encoder(nn.Module):
     def __init__(self, hparams: dict):
         super().__init__()
@@ -35,7 +34,7 @@ class Encoder(nn.Module):
         if self.use_con:
             # Initial hidden state for CI encoder
             self.ci_enc_h0 = nn.Parameter(
-                torch.zeros((2, hps.ci_enc_dim), requires_grad=True)
+                torch.zeros((2, 1, hps.ci_enc_dim), requires_grad=True)
             )
             # CI encoder
             self.ci_enc = BidirectionalClippedGRU(
@@ -61,6 +60,7 @@ class Encoder(nn.Module):
         else:
             ic_enc_data = data_drop
             ci_enc_data = data_drop
+            
         # Pass data through IC encoder
         ic_enc_h0 = torch.tile(self.ic_enc_h0, (1, batch_size, 1))
         _, h_n = self.ic_enc(ic_enc_data, ic_enc_h0)
@@ -72,7 +72,7 @@ class Encoder(nn.Module):
         ic_std = torch.sqrt(torch.exp(ic_logvar) + hps.ic_post_var_min)
         if self.use_con:
             # Pass data through CI encoder
-            ci_enc_h0 = torch.tile(1, self.ci_enc_h0, (batch_size, 1))
+            ci_enc_h0 = torch.tile(self.ci_enc_h0, (1, batch_size, 1))
             ci, _ = self.ci_enc(ci_enc_data, ci_enc_h0)
             # Add a lag to the controller input
             ci_fwd, ci_bwd = torch.split(ci, hps.ci_enc_dim, dim=2)
@@ -84,9 +84,9 @@ class Encoder(nn.Module):
             fwd_steps = hps.recon_seq_len - hps.encod_seq_len
             ci = F.pad(ci, (0, 0, 0, fwd_steps, 0, 0))
         else:
-            # Create a placeholder if there's no conctroller
+            # Create a placeholder if there's no controller
             ci = torch.zeros(data.shape[0], hps.recon_seq_len, 0).to(data.device)
-            
+
         return ic_mean, ic_std, ci
 
 class SREncoder(nn.Module):
@@ -156,7 +156,6 @@ class SREncoder(nn.Module):
         if self.use_con:
             # Pass data through CI encoder
             ci_enc_h0 = torch.tile(self.ci_enc_h0, (batch_size, 1))
-           
             ci, _ = self.ci_enc(ci_enc_data, ci_enc_h0)
             fwd_steps = hps.recon_seq_len - hps.encod_seq_len
             ci = F.pad(ci, (0, 0, 0, fwd_steps, 0, 0))

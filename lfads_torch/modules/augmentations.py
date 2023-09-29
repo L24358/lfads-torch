@@ -156,7 +156,63 @@ class CoordinatedDropout:
 
     def reset(self):
         self.grad_masks = []
+        
+class AreaCoordinatedDropout:
+    def __init__(self, cd_rate, cd_pass_rate, ic_enc_seq_len):
+        self.cd_rate = cd_rate
+        self.ic_enc_seq_len = ic_enc_seq_len
+        self.cd_input_dist = Bernoulli(1 - cd_rate)
+        self.cd_pass_dist = Bernoulli(cd_pass_rate)
+        # Use FIFO for grad masks
+        self.grad_masks = {}
+        self.first_pass = True
 
+    def process_batch(self, batch):
+        encod_data, *other_data = batch
+        
+        cd_input_dict = {}
+        for area_name in encod_data.keys():
+            # Construct grad_masks if it is first pass
+            if self.first_pass: self.grad_masks[area_name] = []
+            
+            # Only use CD where we are inferring rates (none inferred for IC segment)
+            unmaskable_data = encod_data[area_name][:, : self.ic_enc_seq_len, :]
+            maskable_data = encod_data[area_name][:, self.ic_enc_seq_len :, :]
+            # Sample a new CD mask at each training step
+            device = encod_data[area_name].device
+            cd_mask = self.cd_input_dist.sample(maskable_data.shape).to(device)
+            pass_mask = self.cd_pass_dist.sample(maskable_data.shape).to(device)
+            # Save the gradient mask for `process_outputs`
+            if self.cd_rate > 0:
+                grad_mask = torch.logical_or(torch.logical_not(cd_mask), pass_mask).float()
+            else:
+                # If cd_rate == 0, turn off CD
+                grad_mask = torch.ones_like(cd_mask)
+            # Store the grad_mask for later
+            self.grad_masks[area_name].append(grad_mask)
+            # Mask and scale post-CD input so it has the same sum as the original data
+            cd_masked_data = maskable_data * cd_mask / (1 - self.cd_rate)
+            # Concatenate the data from the IC encoder segment if using
+            cd_input = torch.cat([unmaskable_data, cd_masked_data], axis=1)
+            cd_input_dict[area_name] = cd_input
+
+        self.first_pass = False
+        return cd_input_dict, *other_data
+
+    def process_losses(self, recon_loss, *args):
+        # First-in-first-out
+        grad_mask = self.grad_masks.pop(0)
+        # Expand mask, but don't block gradients
+        grad_mask = pad_mask(grad_mask, recon_loss, 1.0)
+        # Block gradients with respect to the masked outputs
+        grad_loss = recon_loss * grad_mask
+        nograd_loss = (recon_loss * (1 - grad_mask)).detach()
+        cd_loss = grad_loss + nograd_loss
+
+        return cd_loss
+
+    def reset(self):
+        self.grad_masks = {}
 
 class CoordinatedDropoutTF2:
     def __init__(self, cd_rate, cd_pass_rate, ic_enc_seq_len):

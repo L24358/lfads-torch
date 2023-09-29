@@ -85,74 +85,75 @@ class RasterPlot(pl.Callback):
         pl_module : pytorch_lightning.LightningModule
             The model currently being trained.
         """
-        if (trainer.current_epoch % self.log_every_n_epochs) != 0:
-            return
-        # Check for any image loggers
-        if not has_image_loggers(trainer.loggers):
-            return
-        # Get data samples from the dataloaders
-        if self.split == "valid":
-            dataloader = trainer.datamodule.val_dataloader()
-        else:
-            dataloader = trainer.datamodule.train_dataloader(shuffle=False)
-        batch = next(iter(dataloader))
-        # Determine which sessions are in the batch
-        sessions = sorted(batch.keys())
-        # Move data to the right device
-        batch = send_batch_to_device(batch, pl_module.device)
-        # Compute model output
-        output = pl_module.predict_step(
-            batch=batch,
-            batch_ix=None,
-            sample_posteriors=True,
-        )
-        # Discard the extra data - only the SessionBatches are relevant here
-        batch = {s: b[0] for s, b in batch.items()}
-        # Log a few example outputs for each session
-        for s in sessions:
-            # Convert everything to numpy
-            encod_data = batch[s].encod_data.detach().cpu().numpy()
-            recon_data = batch[s].recon_data.detach().cpu().numpy()
-            truth = batch[s].truth.detach().cpu().numpy()
-            means = output[s].output_params.detach().cpu().numpy()
-            inputs = output[s].gen_inputs.detach().cpu().numpy()
-            # Compute data sizes
-            _, steps_encod, neur_encod = encod_data.shape
-            _, steps_recon, neur_recon = recon_data.shape
-            # Decide on how to plot panels
-            if np.all(np.isnan(truth)):
-                plot_arrays = [recon_data, means, inputs]
-                height_ratios = [3, 3, 1]
-            else:
-                plot_arrays = [recon_data, truth, means, inputs]
-                height_ratios = [3, 3, 3, 1]
-            # Create subplots
-            fig, axes = plt.subplots(
-                len(plot_arrays),
-                self.n_samples,
-                sharex=True,
-                sharey="row",
-                figsize=(3 * self.n_samples, 10),
-                gridspec_kw={"height_ratios": height_ratios},
-            )
-            for i, ax_col in enumerate(axes.T):
-                for j, (ax, array) in enumerate(zip(ax_col, plot_arrays)):
-                    if j < len(plot_arrays) - 1:
-                        ax.imshow(array[i].T, interpolation="none", aspect="auto")
-                        ax.vlines(steps_encod, 0, neur_recon, color="orange")
-                        ax.hlines(neur_encod, 0, steps_recon, color="orange")
-                        ax.set_xlim(0, steps_recon)
-                        ax.set_ylim(0, neur_recon)
-                    else:
-                        ax.plot(array[i])
-            plt.tight_layout()
-            # Log the figure
-            log_figure(
-                trainer.loggers,
-                f"{self.split}/raster_plot/sess{s}",
-                fig,
-                trainer.global_step,
-            )
+        pass
+        # if (trainer.current_epoch % self.log_every_n_epochs) != 0:
+        #     return
+        # # Check for any image loggers
+        # if not has_image_loggers(trainer.loggers):
+        #     return
+        # # Get data samples from the dataloaders
+        # if self.split == "valid":
+        #     dataloader = trainer.datamodule.val_dataloader()
+        # else:
+        #     dataloader = trainer.datamodule.train_dataloader(shuffle=False)
+        # batch = next(iter(dataloader))
+        # # Determine which sessions are in the batch
+        # sessions = sorted(batch.keys())
+        # # Move data to the right device
+        # batch = send_batch_to_device(batch, pl_module.device)
+        # # Compute model output
+        # output = pl_module.predict_step(
+        #     batch=batch,
+        #     batch_ix=None,
+        #     sample_posteriors=True,
+        # )
+        # # Discard the extra data - only the SessionBatches are relevant here
+        # batch = {s: b[0] for s, b in batch.items()}
+        # # Log a few example outputs for each session
+        # for s in sessions:
+        #     # Convert everything to numpy
+        #     encod_data = batch[s].encod_data.detach().cpu().numpy()
+        #     recon_data = batch[s].recon_data.detach().cpu().numpy()
+        #     truth = batch[s].truth.detach().cpu().numpy()
+        #     means = output[s].output_params.detach().cpu().numpy()
+        #     inputs = output[s].gen_inputs.detach().cpu().numpy()
+        #     # Compute data sizes
+        #     _, steps_encod, neur_encod = encod_data.shape
+        #     _, steps_recon, neur_recon = recon_data.shape
+        #     # Decide on how to plot panels
+        #     if np.all(np.isnan(truth)):
+        #         plot_arrays = [recon_data, means, inputs]
+        #         height_ratios = [3, 3, 1]
+        #     else:
+        #         plot_arrays = [recon_data, truth, means, inputs]
+        #         height_ratios = [3, 3, 3, 1]
+        #     # Create subplots
+        #     fig, axes = plt.subplots(
+        #         len(plot_arrays),
+        #         self.n_samples,
+        #         sharex=True,
+        #         sharey="row",
+        #         figsize=(3 * self.n_samples, 10),
+        #         gridspec_kw={"height_ratios": height_ratios},
+        #     )
+        #     for i, ax_col in enumerate(axes.T):
+        #         for j, (ax, array) in enumerate(zip(ax_col, plot_arrays)):
+        #             if j < len(plot_arrays) - 1:
+        #                 ax.imshow(array[i].T, interpolation="none", aspect="auto")
+        #                 ax.vlines(steps_encod, 0, neur_recon, color="orange")
+        #                 ax.hlines(neur_encod, 0, steps_recon, color="orange")
+        #                 ax.set_xlim(0, steps_recon)
+        #                 ax.set_ylim(0, neur_recon)
+        #             else:
+        #                 ax.plot(array[i])
+        #     plt.tight_layout()
+        #     # Log the figure
+        #     log_figure(
+        #         trainer.loggers,
+        #         f"{self.split}/raster_plot/sess{s}",
+        #         fig,
+        #         trainer.global_step,
+        #     )
 
 
 class TrajectoryPlot(pl.Callback):
@@ -180,62 +181,64 @@ class TrajectoryPlot(pl.Callback):
         pl_module : pytorch_lightning.LightningModule
             The model currently being trained.
         """
-        # Skip evaluation for most epochs to save time
-        if (trainer.current_epoch % self.log_every_n_epochs) != 0:
-            return
-        # Check for any image loggers
-        if not has_image_loggers(trainer.loggers):
-            return
-        # Get only the validation dataloaders
-        pred_dls = trainer.datamodule.predict_dataloader()
-        dataloaders = {s: dls["valid"] for s, dls in pred_dls.items()}
-        # Compute outputs and plot for one session at a time
-        for s, dataloader in dataloaders.items():
-            latents = []
-            for batch in dataloader:
-                # Move data to the right device
-                batch = send_batch_to_device({s: batch}, pl_module.device)
-                # Perform the forward pass through the model
-                output = pl_module.predict_step(batch, None, sample_posteriors=False)[s]
-                latents.append(output.factors)
-            latents = torch.cat(latents).detach().cpu().numpy()
-            # Reduce dimensionality if necessary
-            n_samp, n_step, n_lats = latents.shape
-            if n_lats > 3:
-                latents_flat = latents.reshape(-1, n_lats)
-                pca = PCA(n_components=3)
-                latents = pca.fit_transform(latents_flat)
-                latents = latents.reshape(n_samp, n_step, 3)
-                explained_variance = np.sum(pca.explained_variance_ratio_)
-            else:
-                explained_variance = 1.0
-            # Create figure and plot trajectories
-            fig = plt.figure(figsize=(10, 10))
-            ax = fig.add_subplot(111, projection="3d")
-            for traj in latents:
-                ax.plot(*traj.T, alpha=0.2, linewidth=0.5)
-            ax.scatter(*latents[:, 0, :].T, alpha=0.1, s=10, c="g")
-            ax.scatter(*latents[:, -1, :].T, alpha=0.1, s=10, c="r")
-            ax.set_title(f"explained variance: {explained_variance:.2f}")
-            plt.tight_layout()
-            # Log the figure
-            log_figure(
-                trainer.loggers,
-                f"trajectory_plot/sess{s}",
-                fig,
-                trainer.global_step,
-            )
+        pass
+        # # Skip evaluation for most epochs to save time
+        # if (trainer.current_epoch % self.log_every_n_epochs) != 0:
+        #     return
+        # # Check for any image loggers
+        # if not has_image_loggers(trainer.loggers):
+        #     return
+        # # Get only the validation dataloaders
+        # pred_dls = trainer.datamodule.predict_dataloader()
+        # dataloaders = {s: dls["valid"] for s, dls in pred_dls.items()}
+        # # Compute outputs and plot for one session at a time
+        # for s, dataloader in dataloaders.items():
+        #     latents = []
+        #     for batch in dataloader:
+        #         # Move data to the right device
+        #         batch = send_batch_to_device({s: batch}, pl_module.device)
+        #         # Perform the forward pass through the model
+        #         output = pl_module.predict_step(batch, None, sample_posteriors=False)[s]
+        #         latents.append(output.factors)
+        #     latents = torch.cat(latents).detach().cpu().numpy()
+        #     # Reduce dimensionality if necessary
+        #     n_samp, n_step, n_lats = latents.shape
+        #     if n_lats > 3:
+        #         latents_flat = latents.reshape(-1, n_lats)
+        #         pca = PCA(n_components=3)
+        #         latents = pca.fit_transform(latents_flat)
+        #         latents = latents.reshape(n_samp, n_step, 3)
+        #         explained_variance = np.sum(pca.explained_variance_ratio_)
+        #     else:
+        #         explained_variance = 1.0
+        #     # Create figure and plot trajectories
+        #     fig = plt.figure(figsize=(10, 10))
+        #     ax = fig.add_subplot(111, projection="3d")
+        #     for traj in latents:
+        #         ax.plot(*traj.T, alpha=0.2, linewidth=0.5)
+        #     ax.scatter(*latents[:, 0, :].T, alpha=0.1, s=10, c="g")
+        #     ax.scatter(*latents[:, -1, :].T, alpha=0.1, s=10, c="r")
+        #     ax.set_title(f"explained variance: {explained_variance:.2f}")
+        #     plt.tight_layout()
+        #     # Log the figure
+        #     log_figure(
+        #         trainer.loggers,
+        #         f"trajectory_plot/sess{s}",
+        #         fig,
+        #         trainer.global_step,
+        #     )
 
 
 class TestEval(pl.Callback):
     def on_validation_epoch_end(self, trainer, pl_module):
-        test_batch = send_batch_to_device(
-            trainer.datamodule.test_data[0][0], pl_module.device
-        )
-        _, esl, edd = test_batch.encod_data.shape
-        test_output = pl_module(test_batch, output_means=False)[0]
-        test_recon = pl_module.recon[0].compute_loss(
-            test_batch.encod_data,
-            test_output.output_params[:, :esl, :edd],
-        )
-        pl_module.log("test/recon", test_recon)
+        pass
+        # test_batch = send_batch_to_device(
+        #     trainer.datamodule.test_data[0][0], pl_module.device
+        # )
+        # _, esl, edd = test_batch.encod_data.shape
+        # test_output = pl_module(test_batch, output_means=False)[0]
+        # test_recon = pl_module.recon[0].compute_loss(
+        #     test_batch.encod_data,
+        #     test_output.output_params[:, :esl, :edd],
+        # )
+        # pl_module.log("test/recon", test_recon)
