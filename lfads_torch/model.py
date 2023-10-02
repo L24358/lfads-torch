@@ -570,7 +570,7 @@ class MRLFADS(pl.LightningModule):
         # Forward pass
         self.forward(
             batch,
-            sample_posteriors=hps.variational,
+            sample_posteriors=hps.variational and split == "train",
             output_means=False
         )
         
@@ -587,8 +587,17 @@ class MRLFADS(pl.LightningModule):
             recon_all = [area.recon[s].compute_loss(
                 batch[s].recon_data[area_name][:,recon_start:],
                 area.recon[s].reshape_output_params(rates_split[s]))
-                for s in sessions]
-            if not hps.recon_reduce_mean: recon_all = [torch.sum(ra, dim=(1, 2)) for ra in recon_all]
+            for s in sessions]
+            
+            # Apply loss processing
+            recon_all = [aug_stack.process_losses(
+                recon_all[s],
+                (area_name, batch[s].recon_data[area_name][:,recon_start:]),
+                self.log,
+                split)
+            for s in sessions]
+            
+            if not hps.recon_reduce_mean: recon_all = [torch.sum(ra, dim=(1, 2)) for ra in recon_all] # uses sum, not mean (except batch dim)
             sess_recon = [ra.mean() for ra in recon_all]
             recon = torch.mean(torch.stack(sess_recon))
             

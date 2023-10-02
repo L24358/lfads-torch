@@ -200,10 +200,11 @@ class AreaCoordinatedDropout:
         return cd_input_dict, *other_data
 
     def process_losses(self, recon_loss, *args):
+        area_name = args[0][0]
         # First-in-first-out
-        grad_mask = self.grad_masks.pop(0)
+        grad_mask = self.grad_masks[area_name].pop(0)
         # Expand mask, but don't block gradients
-        grad_mask = pad_mask(grad_mask, recon_loss, 1.0)
+        # grad_mask = pad_mask(grad_mask, recon_loss, 1.0)
         # Block gradients with respect to the masked outputs
         grad_loss = recon_loss * grad_mask
         nograd_loss = (recon_loss * (1 - grad_mask)).detach()
