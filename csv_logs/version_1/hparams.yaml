@@ -1,0 +1,92 @@
+area_names:
+- SMA5
+- FMN
+batch_size: 16
+cell_clip: 5.0
+dropout_rate: 0.3
+encod_seq_len: 500
+ic_enc_seq_len: 50
+infer_aug_stack: !!python/object:lfads_torch.modules.augmentations.AugmentationStack
+  batch_transforms: []
+  loss_transforms: []
+kl_co_scale: 1.0e-07
+kl_com_scale: 1.0e-07
+kl_ic_scale: 1.0e-07
+kl_increase_epoch_m: 120
+kl_increase_epoch_u: 80
+kl_start_epoch_m: 40
+kl_start_epoch_u: 0
+l2_ci_enc_scale: 0.0
+l2_con_scale: 0.0
+l2_gen_scale: 0.0
+l2_ic_enc_scale: 0.0
+l2_increase_epoch: 80
+l2_start_epoch: 0
+loss_scale: 10000.0
+lr_adam_beta1: 0.9
+lr_adam_beta2: 0.999
+lr_adam_epsilon: 1.0e-08
+lr_decay: 0.95
+lr_init: 0.004
+lr_patience: 6
+lr_scheduler: false
+lr_stop: 1.0e-05
+p_split:
+- 0.85
+- 0.15
+recon_reduce_mean: true
+recon_seq_len: 500
+session_idx: all
+subject_id: 456774
+total_fac_dim: 50
+train_aug_stack: !!python/object:lfads_torch.modules.augmentations.AugmentationStack
+  batch_transforms:
+  - &id003 !!python/object:lfads_torch.modules.augmentations.AreaCoordinatedDropout
+    cd_input_dist: !!python/object:torch.distributions.bernoulli.Bernoulli
+      _batch_shape: !!python/object/apply:torch.Size
+      - !!python/tuple []
+      _event_shape: !!python/object/apply:torch.Size
+      - !!python/tuple []
+      _param: &id001 !!python/object/apply:torch._utils._rebuild_tensor_v2
+      - !!python/object/apply:torch.storage._load_from_bytes
+        - !!binary |
+          gAKKCmz8nEb5IGqoUBkugAJN6QMugAJ9cQAoWBAAAABwcm90b2NvbF92ZXJzaW9ucQFN6QNYDQAA
+          AGxpdHRsZV9lbmRpYW5xAohYCgAAAHR5cGVfc2l6ZXNxA31xBChYBQAAAHNob3J0cQVLAlgDAAAA
+          aW50cQZLBFgEAAAAbG9uZ3EHSwR1dS6AAihYBwAAAHN0b3JhZ2VxAGN0b3JjaApGbG9hdFN0b3Jh
+          Z2UKcQFYDgAAADkzOTY0OTcyNjI0OTYwcQJYAwAAAGNwdXEDSwFOdHEEUS6AAl1xAFgOAAAAOTM5
+          NjQ5NzI2MjQ5NjBxAWEuAQAAAAAAAAAzMzM/
+      - 0
+      - !!python/tuple []
+      - !!python/tuple []
+      - false
+      - !!python/object/apply:collections.OrderedDict
+        - []
+      probs: *id001
+    cd_pass_dist: !!python/object:torch.distributions.bernoulli.Bernoulli
+      _batch_shape: !!python/object/apply:torch.Size
+      - !!python/tuple []
+      _event_shape: !!python/object/apply:torch.Size
+      - !!python/tuple []
+      _param: &id002 !!python/object/apply:torch._utils._rebuild_tensor_v2
+      - !!python/object/apply:torch.storage._load_from_bytes
+        - !!binary |
+          gAKKCmz8nEb5IGqoUBkugAJN6QMugAJ9cQAoWBAAAABwcm90b2NvbF92ZXJzaW9ucQFN6QNYDQAA
+          AGxpdHRsZV9lbmRpYW5xAohYCgAAAHR5cGVfc2l6ZXNxA31xBChYBQAAAHNob3J0cQVLAlgDAAAA
+          aW50cQZLBFgEAAAAbG9uZ3EHSwR1dS6AAihYBwAAAHN0b3JhZ2VxAGN0b3JjaApGbG9hdFN0b3Jh
+          Z2UKcQFYDgAAADkzOTY0OTU4NjkxMDA4cQJYAwAAAGNwdXEDSwFOdHEEUS6AAl1xAFgOAAAAOTM5
+          NjQ5NTg2OTEwMDhxAWEuAQAAAAAAAAAAAAAA
+      - 0
+      - !!python/tuple []
+      - !!python/tuple []
+      - false
+      - !!python/object/apply:collections.OrderedDict
+        - []
+      probs: *id002
+    cd_rate: 0.3
+    first_pass: true
+    grad_masks: {}
+    ic_enc_seq_len: 50
+  loss_transforms:
+  - *id003
+variational: true
+weight_decay: 0.0

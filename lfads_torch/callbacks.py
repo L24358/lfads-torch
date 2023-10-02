@@ -107,6 +107,7 @@ class RasterPlot(pl.Callback):
         #     batch_ix=None,
         #     sample_posteriors=True,
         # )
+        # import pdb; pdb.set_trace()
         # # Discard the extra data - only the SessionBatches are relevant here
         # batch = {s: b[0] for s, b in batch.items()}
         # # Log a few example outputs for each session

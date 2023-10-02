@@ -471,8 +471,10 @@ class MRLFADS(pl.LightningModule):
         l2_ci_enc_scale: float,
         l2_gen_scale: float,
         l2_con_scale: float,
-        kl_start_epoch: int,
-        kl_increase_epoch: int,
+        kl_start_epoch_u: int,
+        kl_increase_epoch_u: int,
+        kl_start_epoch_m: int,
+        kl_increase_epoch_m: int,
         kl_ic_scale: float,
         kl_co_scale: float,
         kl_com_scale: float,
@@ -538,9 +540,9 @@ class MRLFADS(pl.LightningModule):
                 self.save_var[area_name].com_params[:,t,:] = com_params
                 
                 # decoder
-                states = self.save_var[area_name].states[:,t,:]
+                states = self.save_var[area_name].states[:,t,:].clone()
                 inputs = self.save_var[area_name].inputs[:,t,:]
-                new_state, co_params = area.decoder(inputs, states, sample_posteriors=sample_posteriors)
+                new_state, co_params = area.decoder(inputs, states, sample_posteriors=sample_posteriors)   
                 self.save_var[area_name].states[:,t+1,:] = new_state
                 self.save_var[area_name].co_params[:,t,:] = co_params
                 
@@ -576,7 +578,8 @@ class MRLFADS(pl.LightningModule):
         
         # Compute ramping coefficients
         l2_ramp = self._compute_ramp(hps.l2_start_epoch, hps.l2_increase_epoch)
-        kl_ramp = self._compute_ramp(hps.kl_start_epoch, hps.kl_increase_epoch)
+        kl_ramp_u = self._compute_ramp(hps.kl_start_epoch_u, hps.kl_increase_epoch_u)
+        kl_ramp_m = self._compute_ramp(hps.kl_start_epoch_m, hps.kl_increase_epoch_m)
         
         # Calculate all losses
         mr_loss = 0
@@ -613,10 +616,18 @@ class MRLFADS(pl.LightningModule):
             com_kl = area.com_prior(com_mean, com_std) * hps.kl_com_scale
             
             # Compute the final loss
-            sr_loss = hps.loss_scale * (recon + l2_ramp * l2 + kl_ramp * (ic_kl + co_kl + com_kl))
+            sr_loss = hps.loss_scale * (recon + l2_ramp * l2 + kl_ramp_u * (ic_kl + co_kl) + kl_ramp_m * com_kl)
             mr_loss += sr_loss
             
-        # TODO ================= double checked up to here ========================= #
+        # Log per-session metrics
+        for s, recon_value, batch_size in zip(sessions, sess_recon, batch_sizes):
+            self.log(
+                name=f"{split}/recon/sess{s}",
+                value=recon_value,
+                on_step=False,
+                on_epoch=True,
+                batch_size=batch_size,
+            )
         # Collect metrics for logging
         metrics = {
             f"{split}/loss": mr_loss,
@@ -626,7 +637,8 @@ class MRLFADS(pl.LightningModule):
             f"{split}/wt_kl": ic_kl + co_kl,
             f"{split}/wt_kl/ic": ic_kl,
             f"{split}/wt_kl/co": co_kl,
-            f"{split}/wt_kl/ramp": kl_ramp,
+            f"{split}/wt_kl/ramp_u": kl_ramp_u,
+            f"{split}/wt_kl/ramp_m": kl_ramp_m,
         }
         if split == "valid":
             # Update the smoothed reconstruction loss
@@ -649,10 +661,10 @@ class MRLFADS(pl.LightningModule):
         return mr_loss
 
     def training_step(self, batch, batch_idx):
-        self._shared_step(batch, batch_idx, "train")
+        return self._shared_step(batch, batch_idx, "train")
         
     def validation_step(self, batch, batch_idx):
-        self._shared_step(batch, batch_idx, "valid")
+        return self._shared_step(batch, batch_idx, "valid")
         
     def predict_step(self, batch, batch_ix, sample_posteriors=True):
         sessions = sorted(batch.keys())

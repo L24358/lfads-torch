@@ -72,7 +72,7 @@ def get_insert_func(sizes):
     
     def insert_tensor(tensor, data, index):
         start, end = data_starts[index], data_ends[index]
-        tensor[..., start:end] = data
+        tensor[..., start:end] = data.clone()
 
     def exclude_tensor(tensor, index):
         start, end = data_starts[index], data_ends[index]
