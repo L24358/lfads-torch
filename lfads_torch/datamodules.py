@@ -8,7 +8,7 @@ from torch import Tensor
 from torch.utils.data import DataLoader, Dataset, random_split
 
 from typing import List, Union
-from .tuples import SessionBatch, AreaSessionBatch
+from .tuples import SessionBatch
 from .utils import get_paths
 
 MANDATORY_KEYS = {
@@ -132,20 +132,20 @@ class SessionAreaDataset(Dataset):
     def __init__(
         self,
         data_dict: dict,
-        info_dict: dict,
+        info_list: dict,
     ):
         self.data_list = list(data_dict.values()) # keys: batch index, value: {``area_name``: tensor of shape (time, num neurons)}
-        self.info_list = list(info_dict.values()) # keys: batch index, value: info string
+        self.info_list = info_list
         self.empty_dict = {key: np.zeros(list(value.shape[:-1]) + [0]) for key, value in self.data_list[0].items()}
         
     def __getitem__(self, idx):
-        return AreaSessionBatch(
+        return SessionBatch(
                     encod_data=self.data_list[idx],
                     recon_data=self.data_list[idx],
-                    info_data=self.info_list[idx],
                     ext_input=self.empty_dict,
+                    truth=self.empty_dict,
                     sv_mask=self.empty_dict, # implement sv_mask elsewhere
-                )
+                ), self.info_list[idx]
     
     def __len__(self): return len(self.data_list)
 
@@ -299,7 +299,6 @@ class MesoMapDataModule(pl.LightningDataModule):
 
                 # Turn data into dictionary, then SessionAreaDataset
                 area_data_dict = {}
-                area_info_dict = {}
                 for dataset_name in dataset_names:
                     area_name = dataset_name.replace("area-", "")
                     ds = group[dataset_name]
@@ -310,8 +309,7 @@ class MesoMapDataModule(pl.LightningDataModule):
                     for bi in range(batch_dim):
                         if dataset_name == dataset_names[0]: area_data_dict[bi] = {}
                         area_data_dict[bi][area_name] = arr[bi]
-                        area_info_dict[bi] = info_strings[bi]
-                session_dataset = SessionAreaDataset(area_data_dict, area_info_dict)
+                session_dataset = SessionAreaDataset(area_data_dict, info_strings)
                 train_ds, val_ds = random_split(session_dataset, hps.p_split)
                 self.train_session_datasets.append(train_ds)
                 self.val_session_datasets.append(val_ds)

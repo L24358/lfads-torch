@@ -12,7 +12,7 @@ from .modules.communicator import Communicator
 from .modules.icsampler import ICSampler
 from .modules.l2 import compute_l2_penalty, sr_compute_l2_penalty
 from .modules.priors import Null
-from .tuples import SessionBatch, SessionOutput, SaveVariables, AreaSessionBatch
+from .tuples import SessionBatch, SessionOutput, SaveVariables
 from .utils import transpose_lists, get_insert_func, HParams
 
 class LFADS(pl.LightningModule):
@@ -578,13 +578,13 @@ class MRLFADS(pl.LightningModule):
         # Process Augmentations
         sessions = sorted(batch.keys())
         aug_stack = self.hparams.train_aug_stack if split == "train" else self.hparams.infer_aug_stack
+        batch = {s: b[0] for s, b in batch.items()}
         batch = {s: aug_stack.process_batch(batch[s]) for s in sessions}
         batch_sizes = [batch[s].encod_data[self.area_names[0]].size(0) for s in sessions]
         batch_size = sum(batch_sizes)
         self.current_batch = batch
         
         # Forward pass
-        import pdb; pdb.set_trace()
         self.forward(
             batch,
             sample_posteriors=hps.variational and split == "train",

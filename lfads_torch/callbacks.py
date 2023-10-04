@@ -66,17 +66,17 @@ class MaximumActivityUnits(pl.Callback):
     def __init__(self, priority):
         self.priority = priority
     
-    def on_validation_epoch_end(self, trainer, pl_module):
+    def on_validation_epoch_start(self, trainer, pl_module):
         # Only compute this once
         if hasattr(pl_module, "maximum_activity_units"): return
         
         dataloader = trainer.datamodule.val_dataloader()
-        batch = next(iter(dataloader)) # only one single batch
         s = 0 # TODO: only using the first session
+        batch = next(iter(dataloader))[s][0] # only one single batch
     
         units = {}
         for area_name in pl_module.area_names:
-            arr = batch[s].recon_data[area_name].detach().cpu().numpy() # shape = (B, T, N)
+            arr = batch.recon_data[area_name].detach().cpu().numpy() # shape = (B, T, N)
             arr = arr.reshape(-1, arr.shape[-1]) # shape = (B*T, N)
             indices = np.flip(np.argsort(arr.mean(0))) # according to mean across batch, time
             units[area_name] = indices
@@ -90,15 +90,17 @@ class PSTHConditions(pl.Callback):
     def __init__(self, priority):
         self.priority = priority
     
-    def on_validation_epoch_end(self, trainer, pl_module):
+    def on_validation_epoch_start(self, trainer, pl_module):
         # Only compute this once
-        if hasattr(pl_module, "maximum_activity_units"): return
+        if hasattr(pl_module, "conditions"): return
         
         dataloader = trainer.datamodule.val_dataloader()
-        batch = next(iter(dataloader)) # only one single batch
         s = 0 # TODO: only using the first session
+        batch, info_strings = next(iter(dataloader))[s] # only one single batch
         
-        
+        categories, inverse_indices = np.unique(info_strings, return_inverse=True)
+        unique_indices = [np.where(inverse_indices == i)[0] for i in range(len(categories))]
+        pl_module.conditions = (categories, unique_indices)
     
 class InferredRatesPlot(pl.Callback):
     """
@@ -182,6 +184,7 @@ class PSTHPlot(pl.Callback):
         self.priority = priority
         self.n_samples = n_samples
         self.log_every_n_epochs = log_every_n_epochs
+        self.smoothing_func = lambda x: gaussian_filter1d(x.astype(float), sigma=10)
         
     def on_validation_epoch_end(self, trainer, pl_module):
         # Check for conditions to not run
@@ -195,7 +198,7 @@ class PSTHPlot(pl.Callback):
         batch = pl_module.current_batch[s]
         save_var = pl_module.save_var
         units = pl_module.maximum_activity_units(self.n_samples)
-        categories, cond_indices = pl_module.conditions()
+        categories, cond_indices = pl_module.conditions
             
         # Create subplots
         n_rows, n_cols = len(pl_module.area_names) * self.n_samples, len(categories)
@@ -210,12 +213,12 @@ class PSTHPlot(pl.Callback):
         # For each condition (category):
         for ic, ax_col in enumerate(axes.T):
             count = 0
-            included_batches = cond_indices[area][ic]
+            included_batches = cond_indices[ic]
 
             # Iterate through areas and take n_sample neurons
             for area_name in pl_module.area_names:
-                recon_data = batch.recon_data[area_names].detach().cpu().numpy()
-                infer_data = save_var[area_names].outputs.detach().cpu().numpy()
+                recon_data = batch.recon_data[area_name].detach().cpu().numpy()
+                infer_data = save_var[area_name].outputs.detach().cpu().numpy()
 
                 for jn in units[area_name]:
                     ax_col[count].plot(infer_data[included_batches, :, jn].mean(axis=0), "b")
@@ -244,7 +247,15 @@ class PSTHPlot(pl.Callback):
             )
 
 class ProctorPreviewPlot(pl.Callback):
-    pass
+    def __init__(self, priority):
+        self.priority = priority
+        
+    def on_validation_epoch_start(self, trainer, pl_module):
+        # Only compute this once
+        if hasattr(pl_module, "conditions"): return
+    
+        if pl_module.hparams.lr_scheduler: scheduler = trainer.lr_schedulers[0]
+        import pdb; pdb.set_trace()
 
 class ProctorSummaryPlot(pl.Callback):
     pass

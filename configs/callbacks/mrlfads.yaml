@@ -1,3 +1,7 @@
+proctor_preview_plot:
+  _target_: lfads_torch.callbacks.ProctorPreviewPlot
+  priority: 1
+
 maximum_activity_units:
   _target_: lfads_torch.callbacks.MaximumActivityUnits
   priority: 1
@@ -8,10 +12,10 @@ psth_conditions:
 
 inferred_rates_plot:
   _target_: lfads_torch.callbacks.InferredRatesPlot
-  priority: 3
+  priority: 1
   log_every_n_epochs: 10
   
 psth_plot:
   _target_: lfads_torch.callbacks.PSTHPlot
-  priority: 4
+  priority: 2
   log_every_n_epochs: 10
