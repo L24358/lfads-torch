@@ -254,11 +254,78 @@ class ProctorPreviewPlot(pl.Callback):
         # Only compute this once
         if hasattr(pl_module, "conditions"): return
     
-        if pl_module.hparams.lr_scheduler: scheduler = trainer.lr_schedulers[0]
-        import pdb; pdb.set_trace()
+        # Access hyperparameters
+        hps = pl_module.hparams
+        epochs = np.arange(0, trainer.max_epochs)
+    
+        # Create subplots
+        n_rows, n_cols = 5, 1
+        fig, axes = plt.subplots(
+            n_rows,
+            n_cols,
+            sharex=True,
+            sharey="row",
+            figsize=(3 * n_cols, 2 * n_rows),
+        )
+    
+        # Plot lowest possible learning rate
+        if hps.lr_scheduler:
+            geom = lambda epoch: hps.lr_init * np.power(hps.lr_decay, epoch // hps.lr_patience)
+            axes[0].plot(epochs, geom(epochs), "k")
+            axes[0].set_title(f"Lowest lr: {round(geom(trainer.max_epochs) ,6)}")
+        else:
+            axes[0].hline(y=lr_init, xmin=0, xmax=epochs[-1], color='k')
+            axes[0].set_title(f"Lowest lr: {hps.lr_init}")
+        axes[0].set_xlabel("epoch")
+        axes[0].set_ylabel("learning rate")
+            
+        # Plot KL divergence history
+        kl_ramp_u = pl_module.compute_ramp_inner(torch.from_numpy(epochs), hps.kl_start_epoch_u, hps.kl_increase_epoch_u)
+        kl_ramp_m = pl_module.compute_ramp_inner(torch.from_numpy(epochs), hps.kl_start_epoch_m, hps.kl_increase_epoch_m)
+        axes[1].plot(kl_ramp_u, "k", label="u")
+        axes[1].plot(kl_ramp_m, "b--", label="m")
+        axes[1].set_xlabel("epoch")
+        axes[1].set_ylabel("KL divergence")
+        axes[1].set_title("KL Divergence History")
+        axes[1].legend()
+        
+        axes[2].plot([], label="train recon")
+        axes[2].plot([], label="val recon")
+        axes[2].set_xlabel("epoch")
+        axes[2].set_ylabel("loss")
+        axes[2].set_title("Reconstruction Loss History")
+        
+        axes[3].plot([], label="train kl (u)")
+        axes[3].plot([], label="val kl (u)")
+        axes[3].plot([], label="train kl (m)")
+        axes[3].plot([], label="val kl (m)")
+        axes[3].plot([], label="train l2")
+        axes[3].plot([], label="val l2")
+        axes[3].set_xlabel("epoch")
+        axes[3].set_ylabel("loss")
+        axes[3].set_title("Regularization Loss History")
+        
+        for area_name in pl_module.area_names:
+            axes[4].plot([], label=area_name)
+        axes[4].set_xlabel("steps")
+        axes[4].set_ylabel("pseudo r-squared")
+        axes[4].set_title("Pseudo R-Squared History")
+        axes[4].legend()
+        
+        plt.tight_layout()
+        log_figure(
+                trainer.loggers,
+                f"proctor_preview",
+                fig,
+                trainer.global_step,
+            )
 
 class ProctorSummaryPlot(pl.Callback):
-    pass
+    def __init__(self, priority):
+        self.priority = priority
+        
+    def on_validation_epoch_end(self, trainer, pl_module):
+        pass
 
 class RasterPlot(pl.Callback):
     """Plots validation spiking data side-by-side with

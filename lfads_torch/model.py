@@ -774,6 +774,10 @@ class MRLFADS(pl.LightningModule):
         self.insert_factor, self.exclude_factor = get_insert_func(fac_dims)
         
     def _compute_ramp(self, start, increase):
+        return _compute_ramp_inner(self.current_epoch, start, increase)
+    
+    @staticmethod
+    def compute_ramp_inner(epoch, start, increase):
         # Compute a coefficient that ramps from 0 to 1 over `increase` epochs
-        ramp = (self.current_epoch + 1 - start) / (increase + 1)
+        ramp = (epoch + 1 - start) / (increase + 1)
         return torch.clamp(torch.tensor(ramp), 0, 1)
