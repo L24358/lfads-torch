@@ -8,7 +8,7 @@ from torch import Tensor
 from torch.utils.data import DataLoader, Dataset, random_split
 
 from typing import List, Union
-from .tuples import SessionBatch
+from .tuples import SessionBatch, AreaSessionBatch
 from .utils import get_paths
 
 MANDATORY_KEYS = {
@@ -132,16 +132,18 @@ class SessionAreaDataset(Dataset):
     def __init__(
         self,
         data_dict: dict,
+        info_dict: dict,
     ):
         self.data_list = list(data_dict.values()) # keys: batch index, value: {``area_name``: tensor of shape (time, num neurons)}
+        self.info_list = list(info_dict.values()) # keys: batch index, value: info string
         self.empty_dict = {key: np.zeros(list(value.shape[:-1]) + [0]) for key, value in self.data_list[0].items()}
         
     def __getitem__(self, idx):
-        return SessionBatch(
+        return AreaSessionBatch(
                     encod_data=self.data_list[idx],
                     recon_data=self.data_list[idx],
+                    info_data=self.info_list[idx],
                     ext_input=self.empty_dict,
-                    truth=self.empty_dict,   # no ground truth
                     sv_mask=self.empty_dict, # implement sv_mask elsewhere
                 )
     
@@ -265,6 +267,7 @@ class MesoMapDataModule(pl.LightningDataModule):
         
     def setup(self, stage=None):
         hps = self.hparams
+        to_string = lambda l: [s.decode('utf-8') for s in l]
         
         filename = f'{PATHS.datapath}sub-{hps.subject_id}/sub-{hps.subject_id}.h5'
         with h5py.File(filename, 'r') as file:
@@ -288,9 +291,15 @@ class MesoMapDataModule(pl.LightningDataModule):
                 filter1 = group["photostim_onset"][:]
                 included_batches = np.where(filter1 == b"N/A")[0]
                 batch_dim = len(included_batches)
+                
+                # Get information necessary
+                info1 = group["trial_instruction"][:][included_batches]
+                info2 = group["outcome"][:][included_batches]
+                info_strings = ["_".join(to_string(info)) for info in zip(info1, info2)]
 
                 # Turn data into dictionary, then SessionAreaDataset
                 area_data_dict = {}
+                area_info_dict = {}
                 for dataset_name in dataset_names:
                     area_name = dataset_name.replace("area-", "")
                     ds = group[dataset_name]
@@ -301,7 +310,8 @@ class MesoMapDataModule(pl.LightningDataModule):
                     for bi in range(batch_dim):
                         if dataset_name == dataset_names[0]: area_data_dict[bi] = {}
                         area_data_dict[bi][area_name] = arr[bi]
-                session_dataset = SessionAreaDataset(area_data_dict)
+                        area_info_dict[bi] = info_strings[bi]
+                session_dataset = SessionAreaDataset(area_data_dict, area_info_dict)
                 train_ds, val_ds = random_split(session_dataset, hps.p_split)
                 self.train_session_datasets.append(train_ds)
                 self.val_session_datasets.append(val_ds)
@@ -312,7 +322,7 @@ class MesoMapDataModule(pl.LightningDataModule):
                 ds,
                 batch_size=self.hparams.batch_size,
                 shuffle=shuffle,
-                drop_last=True,
+                drop_last=False,
             )
             for i, ds in enumerate(self.train_session_datasets)
         }
@@ -322,7 +332,8 @@ class MesoMapDataModule(pl.LightningDataModule):
         dataloaders = {
             i: DataLoader(
                 ds,
-                batch_size=self.hparams.batch_size,
+                batch_size=len(ds),
+                shuffle=False,
             )
             for i, ds in enumerate(self.val_session_datasets)
         }

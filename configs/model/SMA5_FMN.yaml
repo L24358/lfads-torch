@@ -11,7 +11,7 @@ train_aug_stack:
   _target_: lfads_torch.modules.augmentations.AugmentationStack
   transforms:
     - _target_: lfads_torch.modules.augmentations.AreaCoordinatedDropout
-      cd_rate: 0.3
+      cd_rate: 0.0
       cd_pass_rate: 0.0
       ic_enc_seq_len: ${model.ic_enc_seq_len}
   batch_order: [0]

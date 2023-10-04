@@ -12,7 +12,7 @@ from .modules.communicator import Communicator
 from .modules.icsampler import ICSampler
 from .modules.l2 import compute_l2_penalty, sr_compute_l2_penalty
 from .modules.priors import Null
-from .tuples import SessionBatch, SessionOutput, SaveVariables
+from .tuples import SessionBatch, SessionOutput, SaveVariables, AreaSessionBatch
 from .utils import transpose_lists, get_insert_func, HParams
 
 class LFADS(pl.LightningModule):
@@ -550,17 +550,30 @@ class MRLFADS(pl.LightningModule):
                 factor_state = new_state[..., -area.hparams.fac_dim:]
                 self.insert_factor(factor_cat_new, factor_state, ia)
                 factor_state_split = torch.split(factor_state, batch_sizes)
-                rates = torch.cat([area.readout[s](factor_state_split[s]) for s in sessions], dim=0)
-                self.save_var[area_name].outputs[:,t,:] = rates
+                
+                # output means if required
+                if output_means:
+                    rates = torch.cat([
+                        area.recon[s].compute_means(
+                            area.recon[s].reshape_output_params(
+                                area.readout[s](factor_state_split[s]))) for s in sessions
+                        
+                    ], dim = 0)
+                    self.save_var[area_name].outputs[:,t,:] = rates
+                else:
+                    output_params = torch.cat([area.readout[s](factor_state_split[s]) for s in sessions], dim=0)
+                    self.save_var[area_name].outputs[:,t,:] = output_params
                 
             # Reset
             factor_cat = factor_cat_new
                 
         # Post process states, remove the very first state
         for area_name in self.area_names: self.save_var[area_name].states = self.save_var[area_name].states[:,1:,:]
+        return self.save_var
                 
     def _shared_step(self, batch, batch_idx, split):
         hps = self.hparams
+        self.current_split = split
         
         # Process Augmentations
         sessions = sorted(batch.keys())
@@ -568,12 +581,14 @@ class MRLFADS(pl.LightningModule):
         batch = {s: aug_stack.process_batch(batch[s]) for s in sessions}
         batch_sizes = [batch[s].encod_data[self.area_names[0]].size(0) for s in sessions]
         batch_size = sum(batch_sizes)
+        self.current_batch = batch
         
         # Forward pass
+        import pdb; pdb.set_trace()
         self.forward(
             batch,
             sample_posteriors=hps.variational and split == "train",
-            output_means=False
+            output_means=True,
         )
         
         # Compute ramping coefficients
@@ -666,7 +681,7 @@ class MRLFADS(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         return self._shared_step(batch, batch_idx, "valid")
         
-    def predict_step(self, batch, batch_ix, sample_posteriors=True):
+    def predict_step(self, batch, batch_ix, sample_posteriors=False):
         sessions = sorted(batch.keys())
         batch = {s: self.hparams.infer_aug_stack.process_batch(batch[s]) for s in sessions}
         # Reset to clear any saved masks

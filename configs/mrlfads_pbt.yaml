@@ -45,8 +45,8 @@ logger:
   tensorboard_logger:
     _target_: pytorch_lightning.loggers.TensorBoardLogger
     # Configure logger so PTL and ray use the same TB file.
-    save_dir: "/root/capsule/csv_logs"
-      # _target_: ray.tune.get_trial_dir
+    save_dir:
+      _target_: ray.tune.get_trial_dir
     version: ""
     name: ""
   # wandb_logger:

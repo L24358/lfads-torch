@@ -1,0 +1,17 @@
+maximum_activity_units:
+  _target_: lfads_torch.callbacks.MaximumActivityUnits
+  priority: 1
+  
+psth_conditions:
+  _target_: lfads_torch.callbacks.PSTHConditions
+  priority: 2
+
+inferred_rates_plot:
+  _target_: lfads_torch.callbacks.InferredRatesPlot
+  priority: 3
+  log_every_n_epochs: 10
+  
+psth_plot:
+  _target_: lfads_torch.callbacks.PSTHPlot
+  priority: 4
+  log_every_n_epochs: 10

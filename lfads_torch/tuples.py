@@ -13,6 +13,17 @@ SessionBatch = namedtuple(
     ],
 )
 
+AreaSessionBatch = namedtuple(
+    "AreaSessionBatch",
+    [
+        "encod_data",
+        "recon_data",
+        "info_data",
+        "ext_input",
+        "sv_mask",
+    ],
+)
+
 SessionOutput = namedtuple(
     "SessionOutput",
     [
