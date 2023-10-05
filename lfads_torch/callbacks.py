@@ -58,91 +58,69 @@ def log_figure(loggers, name, fig, step):
     img_buf.close()
     
 
-class MaximumActivityUnits(pl.Callback):
+class OnInitEndCalls(pl.Callback):
     """
-    Gets the maximum activity units from the validation dataset.
-    Called on_init_end because validation sets are not shuffled, and are passed as one single batch.
+    Callbacks that are for on_init_end, but have to be called on_valid_epoch_start to access trainer and pl_module.
     """
-    def __init__(self, priority):
+    def __init__(self, priority=1):
         self.priority = priority
-    
+        self.ran = False
+        
     def on_validation_epoch_start(self, trainer, pl_module):
-        # Only compute this once
-        if hasattr(pl_module, "maximum_activity_units"): return
-        
-        dataloader = trainer.datamodule.val_dataloader()
-        s = 0 # TODO: only using the first session
-        batch = next(iter(dataloader))[s][0] # only one single batch
+        if self.ran: return
     
-        units = {}
-        for area_name in pl_module.area_names:
-            arr = batch.recon_data[area_name].detach().cpu().numpy() # shape = (B, T, N)
-            arr = arr.reshape(-1, arr.shape[-1]) # shape = (B*T, N)
-            indices = np.flip(np.argsort(arr.mean(0))) # according to mean across batch, time
-            units[area_name] = indices
-        
-        pl_module.maximum_activity_units = lambda n_samples: {k: v[:n_samples] for k, v in units.items()}
-        
-class PSTHConditions(pl.Callback):
-    """
-    Gets all the PSTH conditions.
-    """
-    def __init__(self, priority):
-        self.priority = priority
-    
-    def on_validation_epoch_start(self, trainer, pl_module):
-        # Only compute this once
-        if hasattr(pl_module, "conditions"): return
-        
+        # Common operations
         dataloader = trainer.datamodule.val_dataloader()
         s = 0 # TODO: only using the first session
         batch, info_strings = next(iter(dataloader))[s] # only one single batch
         
-        categories, inverse_indices = np.unique(info_strings, return_inverse=True)
-        unique_indices = [np.where(inverse_indices == i)[0] for i in range(len(categories))]
-        pl_module.conditions = (categories, unique_indices)
+        # Run functions here
+        get_maximum_activity_units(trainer, pl_module, batch) 
+        get_conditions(trainer, pl_module, batch, info_strings)
+        proctor_preview_plot(trainer, pl_module)
+        
+        self.ran = True
+        
+        
+class OnValidationEndCalls(pl.Callback):
+    """
+    Callbacks that are for on_valid_epoch_end.
+    """
+    def __init__(self, callbacks, priority=1):
+        self.priority = priority
+        self.callbacks = callbacks
+        
+    def on_validation_epoch_end(self, trainer, pl_module):
+        # Common operations
+        s = 0 # TODO: using the first session only, should change to concatenate all sessions in batch
+        batch = pl_module.current_batch[s]
+        save_var = pl_module.save_var
+        
+        for callback in self.callbacks:
+            callback.run(trainer, pl_module, batch, save_var)
     
-class InferredRatesPlot(pl.Callback):
+# ===== Classes that are on_validation_epoch_end ===== #
+    
+class InferredRatesPlot:
     """
     Plots inferred rates with smoothed spiking data.
     """
-
-    def __init__(self, priority, n_samples=3, n_batches=4, log_every_n_epochs=10):
-        """Initializes the callback.
-        Parameters
-        ----------
-        n_samples : int, optional
-            The number of samples to plot per area, by default 3
-        log_every_n_epochs : int, optional
-            The frequency with which to plot and log, by default 10
-        """
-        self.priority = priority
+    def __init__(self, n_samples=3, n_batches=4, log_every_n_epochs=10):
         self.n_samples = n_samples
         self.n_batches = n_batches
         self.log_every_n_epochs = log_every_n_epochs
         self.smoothing_func = lambda x: gaussian_filter1d(x.astype(float), sigma=10)
 
-    def on_validation_epoch_end(self, trainer, pl_module):
-        """Logs plots at the end of the validation epoch.
-        Parameters
-        ----------
-        trainer : pytorch_lightning.Trainer
-            The trainer currently handling the model.
-        pl_module : pytorch_lightning.LightningModule
-            The model currently being trained.
-        """
+    def run(self, trainer, pl_module, batch, save_var):
         # Check for conditions to not run
         if (trainer.current_epoch % self.log_every_n_epochs) != 0:
             return
         if not has_image_loggers(trainer.loggers):
             return
-        
-        # Get data and outputs
-        s = 0 # TODO: using the first session only, should change to concatenate all sessions in batch
-        batch = pl_module.current_batch[s]
-        save_var = pl_module.save_var
-        units = pl_module.maximum_activity_units(self.n_samples)
 
+        # Get units
+        units = pl_module.maximum_activity_units(self.n_samples)
+        
         # Create subplots
         n_rows, n_cols = len(pl_module.area_names) * self.n_samples, self.n_batches
         fig, axes = plt.subplots(
@@ -164,7 +142,7 @@ class InferredRatesPlot(pl.Callback):
                 
                 for jn in units[area_name]:
                     ax_col[count].plot(infer_data[ib, :, jn], "b")
-                    ax_col[count].plot(self.smoothing_func(recon_data[ib, :, jn]), "k")
+                    ax_col[count].plot(self.smoothing_func(recon_data[ib, :, jn]), "k--")
                     count += 1
 
         plt.tight_layout()
@@ -175,18 +153,16 @@ class InferredRatesPlot(pl.Callback):
                 trainer.global_step,
             )
 
-
-class PSTHPlot(pl.Callback):
+class PSTHPlot:
     """
     Plot PSTH for all areas.
     """
-    def __init__(self, priority, n_samples=3, log_every_n_epochs=10):
-        self.priority = priority
+    def __init__(self, n_samples=3, log_every_n_epochs=10):
         self.n_samples = n_samples
         self.log_every_n_epochs = log_every_n_epochs
         self.smoothing_func = lambda x: gaussian_filter1d(x.astype(float), sigma=10)
         
-    def on_validation_epoch_end(self, trainer, pl_module):
+    def run(self, trainer, pl_module, batch, save_var):
         # Check for conditions to not run
         if (trainer.current_epoch % self.log_every_n_epochs) != 0:
             return
@@ -194,9 +170,6 @@ class PSTHPlot(pl.Callback):
             return
         
         # Get data and outputs
-        s = 0 # TODO: using the first session only, should change to concatenate all sessions in batch
-        batch = pl_module.current_batch[s]
-        save_var = pl_module.save_var
         units = pl_module.maximum_activity_units(self.n_samples)
         categories, cond_indices = pl_module.conditions
             
@@ -246,25 +219,27 @@ class PSTHPlot(pl.Callback):
                 trainer.global_step,
             )
 
-class ProctorPreviewPlot(pl.Callback):
-    def __init__(self, priority):
-        self.priority = priority
+class ProctorSummaryPlot:
+    def __init__(self, log_every_n_epochs=10):
+        self.log_every_n_epochs = log_every_n_epochs
         
-    def on_validation_epoch_start(self, trainer, pl_module):
-        # Only compute this once
-        if hasattr(pl_module, "conditions"): return
-    
+    def run(self, trainer, pl_module, batch, save_var):
+        # Check for conditions to not run
+        if (trainer.current_epoch % self.log_every_n_epochs) != 0:
+            return
+        
+        import pdb; pdb.set_trace()
         # Access hyperparameters
         hps = pl_module.hparams
         epochs = np.arange(0, trainer.max_epochs)
     
         # Create subplots
-        n_rows, n_cols = 5, 1
+        n_rows, n_cols = 2, 4
         fig, axes = plt.subplots(
             n_rows,
             n_cols,
             sharex=True,
-            sharey="row",
+            sharey=False,
             figsize=(3 * n_cols, 2 * n_rows),
         )
     
@@ -275,7 +250,7 @@ class ProctorPreviewPlot(pl.Callback):
             axes[0].set_title(f"Lowest lr: {round(geom(trainer.max_epochs) ,6)}")
         else:
             axes[0].hline(y=lr_init, xmin=0, xmax=epochs[-1], color='k')
-            axes[0].set_title(f"Lowest lr: {hps.lr_init}")
+        axes[0].set_title("Learning Rate History")
         axes[0].set_xlabel("epoch")
         axes[0].set_ylabel("learning rate")
             
@@ -315,17 +290,76 @@ class ProctorPreviewPlot(pl.Callback):
         plt.tight_layout()
         log_figure(
                 trainer.loggers,
-                f"proctor_preview",
+                f"proctor_summary/epoch{trainer.current_epoch}",
                 fig,
                 trainer.global_step,
             )
-
-class ProctorSummaryPlot(pl.Callback):
-    def __init__(self, priority):
-        self.priority = priority
         
-    def on_validation_epoch_end(self, trainer, pl_module):
-        pass
+# ===== Functions that are on_init_end ===== #
+        
+def get_maximum_activity_units(trainer, pl_module, batch):
+    units = {}
+    for area_name in pl_module.area_names:
+        arr = batch.recon_data[area_name].detach().cpu().numpy() # shape = (B, T, N)
+        arr = arr.reshape(-1, arr.shape[-1]) # shape = (B*T, N)
+        indices = np.flip(np.argsort(arr.mean(0))) # according to mean across batch, time
+        units[area_name] = indices
+    pl_module.maximum_activity_units = lambda n_samples: {k: v[:n_samples] for k, v in units.items()}
+    
+    
+def get_conditions(trainer, pl_module, batch, info_strings):
+    categories, inverse_indices = np.unique(info_strings, return_inverse=True)
+    unique_indices = [np.where(inverse_indices == i)[0] for i in range(len(categories))]
+    pl_module.conditions = (categories, unique_indices)
+        
+def proctor_preview_plot(trainer, pl_module):
+    # Only compute this once
+    if hasattr(pl_module, "conditions"): return
+
+    # Access hyperparameters
+    hps = pl_module.hparams
+    epochs = np.arange(0, trainer.max_epochs)
+
+    # Create subplots
+    n_rows, n_cols = 2, 1
+    fig, axes = plt.subplots(
+        n_rows,
+        n_cols,
+        sharex=True,
+        sharey="row",
+        figsize=(3 * n_cols, 2 * n_rows),
+    )
+
+    # Plot lowest possible learning rate
+    if hps.lr_scheduler:
+        geom = lambda epoch: hps.lr_init * np.power(hps.lr_decay, epoch // hps.lr_patience)
+        axes[0].plot(epochs, geom(epochs), "k")
+        axes[0].set_title(f"Lowest lr: {round(geom(trainer.max_epochs) ,6)}")
+    else:
+        axes[0].hline(y=lr_init, xmin=0, xmax=epochs[-1], color='k')
+        axes[0].set_title(f"Lowest lr: {hps.lr_init}")
+    axes[0].set_xlabel("epoch")
+    axes[0].set_ylabel("learning rate")
+
+    # Plot KL divergence history
+    kl_ramp_u = pl_module.compute_ramp_inner(torch.from_numpy(epochs), hps.kl_start_epoch_u, hps.kl_increase_epoch_u)
+    kl_ramp_m = pl_module.compute_ramp_inner(torch.from_numpy(epochs), hps.kl_start_epoch_m, hps.kl_increase_epoch_m)
+    axes[1].plot(kl_ramp_u, "k", label="u")
+    axes[1].plot(kl_ramp_m, "b--", label="m")
+    axes[1].set_xlabel("epoch")
+    axes[1].set_ylabel("KL divergence")
+    axes[1].set_title("KL Divergence History")
+    axes[1].legend()
+
+    plt.tight_layout()
+    log_figure(
+            trainer.loggers,
+            f"proctor_preview",
+            fig,
+            trainer.global_step,
+        )
+    
+# ===== Original plotting functions by Andrew ===== #
 
 class RasterPlot(pl.Callback):
     """Plots validation spiking data side-by-side with

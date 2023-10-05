@@ -774,7 +774,7 @@ class MRLFADS(pl.LightningModule):
         self.insert_factor, self.exclude_factor = get_insert_func(fac_dims)
         
     def _compute_ramp(self, start, increase):
-        return _compute_ramp_inner(self.current_epoch, start, increase)
+        return self.compute_ramp_inner(self.current_epoch, start, increase)
     
     @staticmethod
     def compute_ramp_inner(epoch, start, increase):

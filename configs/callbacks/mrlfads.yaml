@@ -1,21 +1,13 @@
-proctor_preview_plot:
-  _target_: lfads_torch.callbacks.ProctorPreviewPlot
-  priority: 1
+on_init_end_calls:
+  _target_: lfads_torch.callbacks.OnInitEndCalls
 
-maximum_activity_units:
-  _target_: lfads_torch.callbacks.MaximumActivityUnits
-  priority: 1
-  
-psth_conditions:
-  _target_: lfads_torch.callbacks.PSTHConditions
-  priority: 2
+on_validation_epoch_end_calls:
+  _target_: lfads_torch.callbacks.OnValidationEndCalls
+  callbacks:
+    - _target_: lfads_torch.callbacks.InferredRatesPlot
+      log_every_n_epochs: 30
+    - _target_: lfads_torch.callbacks.PSTHPlot
+      log_every_n_epochs: 10
+    - _target_: lfads_torch.callbacks.ProctorSummaryPlot
+      log_every_n_epochs: 10
 
-inferred_rates_plot:
-  _target_: lfads_torch.callbacks.InferredRatesPlot
-  priority: 1
-  log_every_n_epochs: 10
-  
-psth_plot:
-  _target_: lfads_torch.callbacks.PSTHPlot
-  priority: 2
-  log_every_n_epochs: 10
