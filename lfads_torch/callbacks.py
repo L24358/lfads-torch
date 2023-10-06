@@ -7,6 +7,7 @@ import torch
 from PIL import Image
 from sklearn.decomposition import PCA
 from scipy.ndimage import gaussian_filter1d
+from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
 from .utils import send_batch_to_device
 
@@ -58,6 +59,13 @@ def log_figure(loggers, name, fig, step):
     img_buf.close()
     
 
+def log_scalar(event_acc, tag):
+    import pdb; pdb.set_trace()
+    scalar_events = event_acc.Scalars(tag)
+    for event in scalar_events:
+        print(f"Step {event.step}: {tag} = {event.value}")
+    import pdb; pdb.set_trace()
+    
 class OnInitEndCalls(pl.Callback):
     """
     Callbacks that are for on_init_end, but have to be called on_valid_epoch_start to access trainer and pl_module.
@@ -96,8 +104,23 @@ class OnValidationEndCalls(pl.Callback):
         batch = pl_module.current_batch[s]
         save_var = pl_module.save_var
         
+        # Construct event accummulator
+        # log_dir = trainer.loggers[1].log_dir # TODO: cannot specify index
+        
+        import os
+        import glob
+        def find_events_file_in_directory(directory):
+            pattern = os.path.join(directory, "*events.out.tfevents*")
+            matching_files = glob.glob(pattern)
+            return matching_files[0]
+        log_dir = "/results/lfads-torch-example/nlb_mc_maze/231006_exampleSingle/"
+        log_dir = find_events_file_in_directory(log_dir)
+        event_acc = EventAccumulator(log_dir)
+        event_acc.Reload()
+        
         for callback in self.callbacks:
-            callback.run(trainer, pl_module, batch, save_var)
+            callback.run(trainer, pl_module, batch, save_var, event_acc)
+    
     
 # ===== Classes that are on_validation_epoch_end ===== #
     
@@ -111,7 +134,7 @@ class InferredRatesPlot:
         self.log_every_n_epochs = log_every_n_epochs
         self.smoothing_func = lambda x: gaussian_filter1d(x.astype(float), sigma=10)
 
-    def run(self, trainer, pl_module, batch, save_var):
+    def run(self, trainer, pl_module, batch, save_var, event_acc):
         # Check for conditions to not run
         if (trainer.current_epoch % self.log_every_n_epochs) != 0:
             return
@@ -162,7 +185,7 @@ class PSTHPlot:
         self.log_every_n_epochs = log_every_n_epochs
         self.smoothing_func = lambda x: gaussian_filter1d(x.astype(float), sigma=10)
         
-    def run(self, trainer, pl_module, batch, save_var):
+    def run(self, trainer, pl_module, batch, save_var, event_acc):
         # Check for conditions to not run
         if (trainer.current_epoch % self.log_every_n_epochs) != 0:
             return
@@ -223,12 +246,11 @@ class ProctorSummaryPlot:
     def __init__(self, log_every_n_epochs=10):
         self.log_every_n_epochs = log_every_n_epochs
         
-    def run(self, trainer, pl_module, batch, save_var):
+    def run(self, trainer, pl_module, batch, save_var, event_acc):
         # Check for conditions to not run
         if (trainer.current_epoch % self.log_every_n_epochs) != 0:
             return
         
-        import pdb; pdb.set_trace()
         # Access hyperparameters
         hps = pl_module.hparams
         epochs = np.arange(0, trainer.max_epochs)
@@ -244,6 +266,9 @@ class ProctorSummaryPlot:
         )
     
         # Plot lowest possible learning rate
+        log_scalar(event_acc, "lr")
+        import pdb; pdb.set_trace()
+        
         if hps.lr_scheduler:
             geom = lambda epoch: hps.lr_init * np.power(hps.lr_decay, epoch // hps.lr_patience)
             axes[0].plot(epochs, geom(epochs), "k")

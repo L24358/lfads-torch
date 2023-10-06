@@ -42,7 +42,7 @@ logger:
     name: ""
   tensorboard_logger:
     _target_: pytorch_lightning.loggers.TensorBoardLogger
-    save_dir: "."
+    save_dir: "/results/lfads-torch-example/nlb_mc_maze/231006_exampleSingle" # "."
     version: ""
     name: ""
 

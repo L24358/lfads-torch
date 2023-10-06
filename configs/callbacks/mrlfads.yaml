@@ -11,3 +11,4 @@ on_validation_epoch_end_calls:
     - _target_: lfads_torch.callbacks.ProctorSummaryPlot
       log_every_n_epochs: 10
 
+    
