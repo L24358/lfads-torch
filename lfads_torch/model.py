@@ -200,19 +200,8 @@ class MRLFADS(pl.LightningModule):
                 factor_state = new_state[..., -area.hparams.fac_dim:]
                 self.insert_factor(factor_cat_new, factor_state, ia)
                 factor_state_split = torch.split(factor_state, batch_sizes)
-                
-                # output means if required
-                if output_means:
-                    rates = torch.cat([
-                        area.recon[s].compute_means(
-                            area.recon[s].reshape_output_params(
-                                area.readout[s](factor_state_split[s]))) for s in sessions
-                        
-                    ], dim = 0)
-                    self.save_var[area_name].outputs[:,t,:] = rates
-                else:
-                    output_params = torch.cat([area.readout[s](factor_state_split[s]) for s in sessions], dim=0)
-                    self.save_var[area_name].outputs[:,t,:] = output_params
+                rates = torch.cat([area.readout[s](factor_state_split[s]) for s in sessions], dim=0)
+                self.save_var[area_name].outputs[:,t,:] = rates
                 
             # Reset
             factor_cat = factor_cat_new
@@ -284,35 +273,24 @@ class MRLFADS(pl.LightningModule):
             sr_loss = hps.loss_scale * (recon + l2_ramp * l2 + kl_ramp_u * (ic_kl + co_kl) + kl_ramp_m * com_kl)
             mr_loss += sr_loss
             
-        # Log per-session metrics
-        for s, recon_value, batch_size in zip(sessions, sess_recon, batch_sizes):
-            self.log(
-                name=f"{split}/recon/sess{s}",
-                value=recon_value,
-                on_step=False,
-                on_epoch=True,
-                batch_size=batch_size,
-            )
-        
-        # Get lr
+        # Get metrics to log
         optimizer = self.optimizers()
         lr = optimizer.param_groups[0]['lr']
-        self.log("lr", lr, on_step=True, on_epoch=True, batch_size=batch_size)
-        
-        # Collect metrics for logging
+            
+        # Log metrics
         metrics = {
             f"{split}/loss": mr_loss,
             f"{split}/recon": recon,
-            f"{split}/wt_l2": l2,
-            f"{split}/wt_l2/ramp": l2_ramp,
-            f"{split}/wt_kl": ic_kl + co_kl,
-            f"{split}/wt_kl/ic": ic_kl,
-            f"{split}/wt_kl/co": co_kl,
-            f"{split}/wt_kl/ramp_u": kl_ramp_u,
-            f"{split}/wt_kl/ramp_m": kl_ramp_m,
-            f"{split}/lr": lr,
+            f"{split}/l2": l2,
+            f"{split}/kl": ic_kl + co_kl + com_kl,
+            f"{split}/kl/ic": ic_kl,
+            f"{split}/kl/co": co_kl,
+            f"{split}/kl/com": com_kl,
+            
+            f"{split}/l2/ramp": l2_ramp,
+            f"{split}/kl/ramp_u": kl_ramp_u,
+            f"{split}/kl/ramp_m": kl_ramp_m,
         }
-        
         if split == "valid":
             # Update the smoothed reconstruction loss
             self.valid_recon_smth.update(recon, batch_size)
@@ -324,14 +302,13 @@ class MRLFADS(pl.LightningModule):
                     "cur_epoch": float(self.current_epoch),
                 }
             )
-            
-        # Log overall metrics
         self.log_dict(
             metrics,
             on_step=False,
             on_epoch=True,
-            batch_size=batch_size,
+            batch_size=sum(batch_sizes),
         )
+        
         return mr_loss
 
     def training_step(self, batch, batch_idx):

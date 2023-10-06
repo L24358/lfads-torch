@@ -5,6 +5,7 @@ import numpy as np
 import pytorch_lightning as pl
 import torch
 from PIL import Image
+from collections import defaultdict
 from sklearn.decomposition import PCA
 from scipy.ndimage import gaussian_filter1d
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
@@ -13,58 +14,13 @@ from .utils import send_batch_to_device
 
 plt.switch_backend("Agg")
 
-
-def has_image_loggers(loggers):
-    """Checks whether any image loggers are available.
-
-    Parameters
-    ----------
-    loggers : obj or list[obj]
-        An object or list of loggers to search.
-    """
-    logger_list = loggers if isinstance(loggers, list) else [loggers]
-    for logger in logger_list:
-        if isinstance(logger, pl.loggers.TensorBoardLogger):
-            return True
-        elif isinstance(logger, pl.loggers.WandbLogger):
-            return True
-    return False
-
-
-def log_figure(loggers, name, fig, step):
-    """Logs a figure image to all available image loggers.
-
-    Parameters
-    ----------
-    loggers : obj or list[obj]
-        An object or list of loggers
-    name : str
-        The name to use for the logged figure
-    fig : matplotlib.figure.Figure
-        The figure to log
-    step : int
-        The step to associate with the logged figure
-    """
-    # Save figure image to in-memory buffer
-    img_buf = io.BytesIO()
-    fig.savefig(img_buf, format="png")
-    image = Image.open(img_buf)
-    # Distribute image to all image loggers
-    logger_list = loggers if isinstance(loggers, list) else [loggers]
-    for logger in logger_list:
-        if isinstance(logger, pl.loggers.TensorBoardLogger):
-            logger.experiment.add_figure(name, fig, step)
-        elif isinstance(logger, pl.loggers.WandbLogger):
-            logger.log_image(name, [image], step)
-    img_buf.close()
-    
-
 def log_scalar(event_acc, tag):
-    import pdb; pdb.set_trace()
-    scalar_events = event_acc.Scalars(tag)
-    for event in scalar_events:
-        print(f"Step {event.step}: {tag} = {event.value}")
-    import pdb; pdb.set_trace()
+    print(event_acc.Tags())
+    # import pdb; pdb.set_trace()
+    # scalar_events = event_acc.Scalars(tag)
+    # for event in scalar_events:
+    #     print(f"Step {event.step}: {tag} = {event.value}")
+    # import pdb; pdb.set_trace()
     
 class OnInitEndCalls(pl.Callback):
     """
@@ -103,26 +59,38 @@ class OnValidationEndCalls(pl.Callback):
         s = 0 # TODO: using the first session only, should change to concatenate all sessions in batch
         batch = pl_module.current_batch[s]
         save_var = pl_module.save_var
-        
-        # Construct event accummulator
-        # log_dir = trainer.loggers[1].log_dir # TODO: cannot specify index
-        
-        import os
-        import glob
-        def find_events_file_in_directory(directory):
-            pattern = os.path.join(directory, "*events.out.tfevents*")
-            matching_files = glob.glob(pattern)
-            return matching_files[0]
-        log_dir = "/results/lfads-torch-example/nlb_mc_maze/231006_exampleSingle/"
-        log_dir = find_events_file_in_directory(log_dir)
-        event_acc = EventAccumulator(log_dir)
-        event_acc.Reload()
+        kwargs = {"batch": batch, "save_var": save_var}
         
         for callback in self.callbacks:
-            callback.run(trainer, pl_module, batch, save_var, event_acc)
-    
+            callback.run(trainer, pl_module, **kwargs)
+            if isinstance(callback, Log): kwargs.update({"log_metrics": callback.metrics})
     
 # ===== Classes that are on_validation_epoch_end ===== #
+
+class Log:
+    def __init__(self, tags=[]):
+        self.metrics = defaultdict(list)
+        self.tags = tags
+    
+    def run(self, trainer, pl_module, **kwargs):
+        new_metrics = trainer.logged_metrics
+        self.update_dict(self.metrics, new_metrics)
+        
+        log_dir = trainer.loggers[1].log_dir # TODO: cannot specify index
+        event_acc = EventAccumulator(log_dir)
+        event_acc.Reload()
+        for tag in self.tags:
+            if tag in event_acc.Tags()["scalars"]:
+                scalar_events = event_acc.Scalars(tag)
+                values = [event.value for event in scalar_events]
+                self.metrics[tag] = values
+            else:
+                self.metrics[tag] = []
+        
+    @staticmethod
+    def update_dict(old_dict, new_dict):
+        for key, value in new_dict.items():
+            old_dict[key].append(value.item())
     
 class InferredRatesPlot:
     """
@@ -134,7 +102,7 @@ class InferredRatesPlot:
         self.log_every_n_epochs = log_every_n_epochs
         self.smoothing_func = lambda x: gaussian_filter1d(x.astype(float), sigma=10)
 
-    def run(self, trainer, pl_module, batch, save_var, event_acc):
+    def run(self, trainer, pl_module, **kwargs):
         # Check for conditions to not run
         if (trainer.current_epoch % self.log_every_n_epochs) != 0:
             return
@@ -142,6 +110,7 @@ class InferredRatesPlot:
             return
 
         # Get units
+        batch, save_var = kwargs["batch"], kwargs["save_var"]
         units = pl_module.maximum_activity_units(self.n_samples)
         
         # Create subplots
@@ -185,7 +154,7 @@ class PSTHPlot:
         self.log_every_n_epochs = log_every_n_epochs
         self.smoothing_func = lambda x: gaussian_filter1d(x.astype(float), sigma=10)
         
-    def run(self, trainer, pl_module, batch, save_var, event_acc):
+    def run(self, trainer, pl_module, **kwargs):
         # Check for conditions to not run
         if (trainer.current_epoch % self.log_every_n_epochs) != 0:
             return
@@ -193,6 +162,7 @@ class PSTHPlot:
             return
         
         # Get data and outputs
+        batch, save_var = kwargs["batch"], kwargs["save_var"]
         units = pl_module.maximum_activity_units(self.n_samples)
         categories, cond_indices = pl_module.conditions
             
@@ -245,15 +215,20 @@ class PSTHPlot:
 class ProctorSummaryPlot:
     def __init__(self, log_every_n_epochs=10):
         self.log_every_n_epochs = log_every_n_epochs
+        self.count = 0
         
-    def run(self, trainer, pl_module, batch, save_var, event_acc):
+    def run(self, trainer, pl_module, **kwargs):
         # Check for conditions to not run
         if (trainer.current_epoch % self.log_every_n_epochs) != 0:
+            return
+        if self.count < 1:
+            self.count += 1
             return
         
         # Access hyperparameters
         hps = pl_module.hparams
         epochs = np.arange(0, trainer.max_epochs)
+        log_metrics = kwargs["log_metrics"]
     
         # Create subplots
         n_rows, n_cols = 2, 4
@@ -266,45 +241,36 @@ class ProctorSummaryPlot:
         )
     
         # Plot lowest possible learning rate
-        log_scalar(event_acc, "lr")
-        import pdb; pdb.set_trace()
+        axes[0][0].plot(log_metrics["lr-AdamW"], "k")
+        axes[0][0].set_title("Learning Rate History")
+        axes[0][0].set_xlabel("epoch")
+        axes[0][0].set_ylabel("learning rate")
         
-        if hps.lr_scheduler:
-            geom = lambda epoch: hps.lr_init * np.power(hps.lr_decay, epoch // hps.lr_patience)
-            axes[0].plot(epochs, geom(epochs), "k")
-            axes[0].set_title(f"Lowest lr: {round(geom(trainer.max_epochs) ,6)}")
-        else:
-            axes[0].hline(y=lr_init, xmin=0, xmax=epochs[-1], color='k')
-        axes[0].set_title("Learning Rate History")
-        axes[0].set_xlabel("epoch")
-        axes[0].set_ylabel("learning rate")
-            
+        axes[0][1].plot(log_metrics["train/loss"], label="train recon")
+        axes[0][1].plot(log_metrics["valid/loss"], label="val recon")
+        axes[0][1].set_xlabel("epoch")
+        axes[0][1].set_ylabel("loss")
+        axes[0][1].set_title("Reconstruction Loss History")
+        
+        axes[0][2].plot(log_metrics["train/kl/co"], label="train kl (u)")
+        axes[0][2].plot(log_metrics["valid/kl/co"], label="val kl (u)")
+        axes[0][2].plot(log_metrics["train/kl/com"], label="train kl (m)")
+        axes[0][2].plot(log_metrics["valid/kl/com"], label="val kl (m)")
+        axes[0][2].plot(log_metrics["train/l2"], label="train l2")
+        axes[0][2].plot(log_metrics["valid/l2"], label="val l2")
+        axes[0][2].set_xlabel("epoch")
+        axes[0][2].set_ylabel("loss")
+        axes[0][2].set_title("Regularization Loss History")
+        
         # Plot KL divergence history
-        kl_ramp_u = pl_module.compute_ramp_inner(torch.from_numpy(epochs), hps.kl_start_epoch_u, hps.kl_increase_epoch_u)
-        kl_ramp_m = pl_module.compute_ramp_inner(torch.from_numpy(epochs), hps.kl_start_epoch_m, hps.kl_increase_epoch_m)
-        axes[1].plot(kl_ramp_u, "k", label="u")
-        axes[1].plot(kl_ramp_m, "b--", label="m")
-        axes[1].set_xlabel("epoch")
-        axes[1].set_ylabel("KL divergence")
-        axes[1].set_title("KL Divergence History")
-        axes[1].legend()
+        axes[0][3].plot(log_metrics["valid/kl/ramp_u"], "k", label="u")
+        axes[0][3].plot(log_metrics["valid/kl/ramp_m"], "b--", label="m")
+        axes[0][3].set_xlabel("epoch")
+        axes[0][3].set_ylabel("KL divergence")
+        axes[0][3].set_title("KL Divergence History")
+        axes[0][3].legend()
         
-        axes[2].plot([], label="train recon")
-        axes[2].plot([], label="val recon")
-        axes[2].set_xlabel("epoch")
-        axes[2].set_ylabel("loss")
-        axes[2].set_title("Reconstruction Loss History")
-        
-        axes[3].plot([], label="train kl (u)")
-        axes[3].plot([], label="val kl (u)")
-        axes[3].plot([], label="train kl (m)")
-        axes[3].plot([], label="val kl (m)")
-        axes[3].plot([], label="train l2")
-        axes[3].plot([], label="val l2")
-        axes[3].set_xlabel("epoch")
-        axes[3].set_ylabel("loss")
-        axes[3].set_title("Regularization Loss History")
-        
+        import pdb; pdb.set_trace()
         for area_name in pl_module.area_names:
             axes[4].plot([], label=area_name)
         axes[4].set_xlabel("steps")
@@ -319,6 +285,9 @@ class ProctorSummaryPlot:
                 fig,
                 trainer.global_step,
             )
+        
+    @staticmethod
+    def cat_and_detach(tensor): return torch.cat(tensor).cpu().detach().numpy()
         
 # ===== Functions that are on_init_end ===== #
         
@@ -567,3 +536,47 @@ class TestEval(pl.Callback):
             test_output.output_params[:, :esl, :edd],
         )
         pl_module.log("test/recon", test_recon)
+
+def has_image_loggers(loggers):
+    """Checks whether any image loggers are available.
+
+    Parameters
+    ----------
+    loggers : obj or list[obj]
+        An object or list of loggers to search.
+    """
+    logger_list = loggers if isinstance(loggers, list) else [loggers]
+    for logger in logger_list:
+        if isinstance(logger, pl.loggers.TensorBoardLogger):
+            return True
+        elif isinstance(logger, pl.loggers.WandbLogger):
+            return True
+    return False
+
+
+def log_figure(loggers, name, fig, step):
+    """Logs a figure image to all available image loggers.
+
+    Parameters
+    ----------
+    loggers : obj or list[obj]
+        An object or list of loggers
+    name : str
+        The name to use for the logged figure
+    fig : matplotlib.figure.Figure
+        The figure to log
+    step : int
+        The step to associate with the logged figure
+    """
+    # Save figure image to in-memory buffer
+    img_buf = io.BytesIO()
+    fig.savefig(img_buf, format="png")
+    image = Image.open(img_buf)
+    # Distribute image to all image loggers
+    logger_list = loggers if isinstance(loggers, list) else [loggers]
+    for logger in logger_list:
+        if isinstance(logger, pl.loggers.TensorBoardLogger):
+            logger.experiment.add_figure(name, fig, step)
+        elif isinstance(logger, pl.loggers.WandbLogger):
+            logger.log_image(name, [image], step)
+    img_buf.close()
