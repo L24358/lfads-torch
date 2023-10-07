@@ -125,7 +125,7 @@ class InferredRatesPlot:
             figsize=(3 * n_cols, 2 * n_rows),
         )
         common_label(fig, "time step", "rates")
-        common_col_title(fig, ["Batch {i}" for i in range(n_cols)], (n_rows, n_cols))
+        common_col_title(fig, [f"Batch {i}" for i in range(n_cols)], (n_rows, n_cols))
         
         # Iterate through areas and take n_sample neurons
         count = 0
@@ -248,13 +248,14 @@ class ProctorSummaryPlot:
         axes[0][1].plot(log_metrics["valid/kl/ramp_u"], "k", label="u")
         axes[0][1].plot(log_metrics["valid/kl/ramp_m"], "b--", label="m")
         axes[0][1].set_ylabel("KL divergence")
-        axes[0][1].set_title("KL Divergence History")
+        axes[0][1].set_title("KL Coefficient History")
         axes[0][1].legend()
         
         axes[1][0].plot(log_metrics["train/loss"], label="train recon")
         axes[1][0].plot(log_metrics["valid/loss"], label="val recon")
         axes[1][0].set_ylabel("loss")
         axes[1][0].set_title("Reconstruction Loss History")
+        axes[1][0].legend()
         
         axes[2][0].plot(log_metrics["train/kl/co"], label="train kl (u)")
         axes[2][0].plot(log_metrics["valid/kl/co"], label="val kl (u)")
@@ -262,25 +263,30 @@ class ProctorSummaryPlot:
         axes[2][0].plot(log_metrics["valid/kl/com"], label="val kl (m)")
         axes[2][0].set_ylabel("loss")
         axes[2][0].set_title("KL Divergence Loss History")
+        axes[2][0].legend()
         
         axes[3][0].plot(log_metrics["train/l2"], label="train l2")
         axes[3][0].plot(log_metrics["valid/l2"], label="val l2")
         axes[3][0].set_ylabel("loss")
         axes[3][0].set_title("L2 Regularization Loss History")
+        axes[3][0].legend()
         
         axes[4][0].plot(log_metrics["train/r2"], label="train r2")
         axes[4][0].plot(log_metrics["valid/r2"], label="val r2")
         axes[4][0].set_ylabel("loss")
         axes[4][0].set_title("Pseudo R-Square History")
+        axes[4][0].legend()
         
         for ia, area_name in enumerate(pl_module.areas):
             axes[1][1].plot(log_metrics[f"{area_name}/recon"], label=area_name)
             axes[2][1].plot(log_metrics[f"{area_name}/kl/co"] + log_metrics[f"{area_name}/kl/com"], label=area_name)
             axes[3][1].plot(log_metrics[f"{area_name}/l2"], label=area_name)
             axes[4][1].plot(log_metrics[f"{area_name}/r2"], label=area_name)
-        axes[2][1].set_title("Reconstruction Loss History")
-        axes[3][1].set_title("KL Divergence Loss History")
+        axes[1][1].set_title("Reconstruction Loss History")
+        axes[2][1].set_title("KL Divergence Loss History")
+        axes[3][1].set_title("L2 Regularization Loss History")
         axes[4][1].set_title("Pseudo R-Square History")
+        axes[1][1].legend()
         axes[2][1].legend()
         axes[3][1].legend()
         axes[4][1].legend()
@@ -339,9 +345,9 @@ class CommunicationPSTHPlot:
                 
                 # Plot kl (co)
                 co_mean, co_std = torch.split(save_var[area_name].co_params, [hps.co_dim, hps.co_dim], dim=2)
-                co_kl = area.co_prior.kl_divergence_by_component(co_mean, co_std)
+                co_kl = area.co_prior.kl_divergence_by_component(co_mean[included_batches], co_std[included_batches])
                 for ico in range(co_dim):
-                    ax_col[count].plot(co_kl[included_batches, :, ico].mean(axis=0))
+                    ax_col[count].plot(co_kl[:, ico])
                 ax_col[count].set_ylabel(f"{area_name}, kl (u)")
                 count += 1
                 
@@ -353,9 +359,9 @@ class CommunicationPSTHPlot:
                 
                 # Plot kl (com)
                 com_mean, com_std = torch.split(save_var[area_name].co_params, [hps.com_dim, hps.com_dim], dim=2)
-                com_kl = area.co_prior.kl_divergence_by_component(com_mean, com_std)
+                com_kl = area.co_prior.kl_divergence_by_component(com_mean[included_batches], com_std[included_batches])
                 for icom in range(com_dim):
-                    ax_col[count].plot(com_kl[included_batches, :, ico].mean(axis=0))
+                    ax_col[count].plot(com_kl[:, ico])
                 ax_col[count].set_ylabel(f"{area_name}, kl (m)")
                 count += 1
 
@@ -373,15 +379,38 @@ class ICPCAPlot:
         if not has_image_loggers(trainer.loggers): # TODO: don't need this anymore
             return
         
+        # Get data
         batch, save_var = kwargs["batch"], kwargs["save_var"]
+        categories, cond_indices = pl_module.conditions
         
-        for area_name, area in pl_module.areas.items():
+        colors = np.zeros(sum(len(sublist) for sublist in cond_indices))
+        for ic, cond_group in enumerate(cond_indices): colors[np.array(cond_group)] = ic
+        
+        # Create subplots
+        n_rows, n_cols = len(pl_module.area_names), 1
+        fig, axes = plt.subplots(
+            n_rows,
+            n_cols,
+            sharex=True,
+            sharey=False,
+            figsize=(4 * n_cols, 2 * n_rows),
+        )
+        common_label(fig, "PCA1", "PCA2")
+        
+        for ia, (area_name, area) in enumerate(pl_module.areas.items()):
             hps = area.hparams
-            ics = save_var["area_name"].states[:, 0, -fps.fac_dim:]
+            ics = save_var[area_name].states[:, 0, -hps.fac_dim:] # shape = (batch, fac_dim)
             
-            ## TODO
-            import pdb; pdb.set_trace()
-        
+            pca = PCA(n_components=2)
+            ics_pca = pca.fit_transform(ics.cpu().detach().numpy())
+            sc = axes[ia].scatter(*ics_pca.T, c=colors)
+            
+            cbar = fig.colorbar(sc, ax=axes[ia])
+            cbar.set_ticks(np.arange(len(categories)))
+            cbar.set_ticklabels(categories)
+            
+        plt.tight_layout()
+        plt.savefig(f"/root/capsule/results/icpca_plot_epoch{trainer.current_epoch}.png")
         
 # ===== Functions that are on_init_end ===== #
         
@@ -424,7 +453,6 @@ def proctor_preview_plot(trainer, pl_module):
     else:
         axes[0].hline(y=lr_init, xmin=0, xmax=epochs[-1], color='k')
         axes[0].set_title(f"Lowest lr: {hps.lr_init}")
-    axes[0].set_xlabel("epoch")
     axes[0].set_ylabel("learning rate")
 
     # Plot KL divergence history
@@ -432,7 +460,6 @@ def proctor_preview_plot(trainer, pl_module):
     kl_ramp_m = pl_module.compute_ramp_inner(torch.from_numpy(epochs), hps.kl_start_epoch_m, hps.kl_increase_epoch_m)
     axes[1].plot(kl_ramp_u, "k", label="u")
     axes[1].plot(kl_ramp_m, "b--", label="m")
-    axes[1].set_xlabel("epoch")
     axes[1].set_ylabel("KL divergence")
     axes[1].set_title("KL Divergence History")
     axes[1].legend()

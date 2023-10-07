@@ -41,18 +41,18 @@ class MultivariateNormal(nn.Module):
         return torch.mean(kl_batch)
     
     def kl_divergence_by_component(self, post_mean, post_std):
-        kl_comp = []
-        import pdb; pdb.set_trace()
-        for i in range(self.mean.size(0)):
-            # Create the posterior distribution
-            posterior = self.make_posterior(post_mean[:,i], post_std[:,i])
-            # Create the prior and posterior
-            prior_std = torch.exp(0.5 * self.logvar[i])
-            prior = Independent(Normal(self.mean[i].reshape(1,1), prior_std.reshape(1,1)), 1)
-            kl = kl_divergence(posterior, prior)
-            kl_comp.append(kl)
-        import pdb; pdb.set_trace()
-        return torch.cat(kl_comp).T # shape = (batch, component) # TODO: consider T
+        batch_size, time_size, comp_size = post_mean.shape
+        kl_comp = torch.zeros(time_size, comp_size)
+        for t in range(time_size):
+            for i in range(comp_size):
+                # Create the posterior distribution
+                posterior = self.make_posterior(post_mean[:,t,i], post_std[:,t,i])
+                # Create the prior and posterior
+                prior_std = torch.exp(0.5 * self.logvar[i])
+                prior = Independent(Normal(self.mean[i].reshape(1,1), prior_std.reshape(1,1)), 1)
+                kl = kl_divergence(posterior, prior)
+                kl_comp[t][i] = kl
+        return kl_comp # shape = (time size, component size)
 
 class AutoregressiveMultivariateNormal(nn.Module):
     def __init__(
