@@ -17,86 +17,10 @@ from .tuples import SessionBatch, SessionOutput, SaveVariables
 from .utils import transpose_lists, get_insert_func, HParams
 
 
-class SRLFADS(nn.Module):
-    def __init__(
-        self,
-        area_name,
-        reconstruction: nn.ModuleList,
-        co_prior: nn.Module,
-        ic_prior: nn.Module,
-        com_prior: nn.Module,
-        readin: nn.ModuleList,
-        readout: nn.ModuleList,
-        **kwargs,
-    ):
-        super().__init__()
-        
-        hparam_keys = ["total_fac_dim", "encod_data_dim", "encod_seq_len", "recon_seq_len", "ext_input_dim", "ic_enc_seq_len",
-                       "ic_enc_dim", "ci_enc_dim", "ci_lag", "con_dim", "co_dim", "ic_dim", "gen_dim", "fac_dim",
-                       "com_dim", "dropout_rate", "ic_post_var_min", "m_post_var_min", "cell_clip"]
-        hparam_dict = {key: None for key in hparam_keys}
-        hparam_dict.update(kwargs)
-        self.hparams = HParams(hparam_dict)
-        self.hparams.add("co_prior", co_prior)
-        self.name = area_name
-        
-        # Make sure the nn.ModuleList arguments are all the same length
-        assert len(readin) == len(readout) == len(reconstruction)
-        # Make sure that non-variational models use null priors
-        if not self.hparams.variational:
-            assert isinstance(ic_prior, Null) and isinstance(co_prior, Null)
-
-        # Set up model components
-        self.use_con = all([self.hparams.ci_enc_dim > 0, self.hparams.con_dim > 0, self.hparams.co_dim > 0])
-        self.readin = readin
-        self.encoder = SREncoder(self.hparams)
-        self.decoder = SRDecoder(self.hparams)
-        self.icsampler = ICSampler(self.hparams, ic_prior)
-        self.communicator = Communicator(self.hparams, com_prior)
-        self.readout = readout
-        self.recon = reconstruction
-        self.ic_prior = ic_prior
-        self.co_prior = co_prior
-        self.com_prior = com_prior
-    
-    def forward(self): raise NotImplementedError
-
-    def decode(
-        self,
-        dec_rnn_input_step,
-        dec_rnn_hidden,
-        sample_posteriors,
-        ):
-        hidden = self.decoder(dec_rnn_input_step, dec_rnn_hidden, sample_posteriors=True) # TODO pass actual sample posteriors # [0]
-        return hidden
-    
-    def pack(
-        self,
-        gen_init_drop,
-        factor_init,
-        com_samp,
-    ):
-        hps = self.hparams
-        # Get size of current batch (may be different than hps.batch_size), TODO: skip exteral input
-        batch_size = gen_init_drop.shape[0]
-        device = gen_init_drop.device
-        dec_rnn_h0 = torch.cat(
-            [
-                gen_init_drop,
-                torch.tile(self.con_h0, (batch_size, 1)),
-                torch.zeros((batch_size, hps.co_dim), device=device),
-                torch.ones((batch_size, hps.co_dim), device=device),
-                torch.zeros(
-                    (batch_size, hps.co_dim + hps.ext_input_dim), device=device
-                ),
-                factor_init,
-                com_samp,
-            ],
-            dim=1,
-        )
-        return dec_rnn_h0
-
 class MRLFADS(pl.LightningModule):
+    """
+    Multi-Regional LFADS.
+    """
     def __init__(
         self,
         areas_info: dict,
@@ -149,7 +73,7 @@ class MRLFADS(pl.LightningModule):
         self,
         batch: dict,
         sample_posteriors: bool = False,
-        output_means: bool = True,
+        output_means: bool = True, # NotImplemented
     ):
         # Calculate total batch_size
         sessions = sorted(batch.keys())
@@ -161,17 +85,15 @@ class MRLFADS(pl.LightningModule):
         factor_cat = torch.zeros(batch_size, self.hparams.total_fac_dim).to(self.device)
         for ia, (area_name, area) in enumerate(self.areas.items()):
 
-            # readin --> encoder --> ic_and_input, and rates
+            # readin --> encoder --> icsampler (controller, generator and factors)
             encod_data = torch.cat([area.readin[s](batch[s].encod_data[area_name]) for s in sessions])
             ic_mean, ic_std, ci = area.encoder(encod_data.float())
-            
             con_init, gen_init, factor_init = area.icsampler(ic_mean, ic_std, sample_posteriors=sample_posteriors)
             factor_init_split = torch.split(factor_init, batch_sizes, dim=0)
-            rates_init = torch.cat([area.readout[s](factor_init_split[s]) for s in sessions], dim=0)
             
             # Save the results
             state = torch.cat([torch.tile(con_init, (batch_size, 1)), gen_init, factor_init], dim=1)
-            self.save_var[area_name].states[:,0,:] = state # this is discarded afterwards
+            self.save_var[area_name].states[:,0,:] = state # this causes state to have +1 length
             self.save_var[area_name].inputs[..., :area.hparams.ci_enc_dim] = ci
             self.save_var[area_name].ic_params = torch.cat([ic_mean, ic_std], dim=1)
             self.insert_factor(factor_cat, factor_init, ia)
@@ -198,7 +120,6 @@ class MRLFADS(pl.LightningModule):
                 self.save_var[area_name].co_params[:,t,:] = co_params
                 self.save_var[area_name].inputs[:,t,-area.hparams.co_dim:] = con_samp
                 
-                
                 # readout
                 factor_state = new_state[..., -area.hparams.fac_dim:]
                 self.insert_factor(factor_cat_new, factor_state, ia)
@@ -209,8 +130,6 @@ class MRLFADS(pl.LightningModule):
             # Reset
             factor_cat = factor_cat_new
                 
-        # Post process states, remove the very first state # TODO: doesn't remove the first state now
-        # for area_name in self.area_names: self.save_var[area_name].states = self.save_var[area_name].states[:,1:,:]
         return self.save_var
                 
     def _shared_step(self, batch, batch_idx, split):
@@ -220,7 +139,7 @@ class MRLFADS(pl.LightningModule):
         # Process Augmentations
         sessions = sorted(batch.keys())
         aug_stack = hps.train_aug_stack if split == "train" else self.hparams.infer_aug_stack
-        batch = {s: b[0] for s, b in batch.items()}
+        batch = {s: b[0] for s, b in batch.items()} # ignore info, only data is relevant
         batch = {s: aug_stack.process_batch(batch[s]) for s in sessions}
         batch_sizes = [batch[s].encod_data[self.area_names[0]].size(0) for s in sessions]
         batch_size = sum(batch_sizes)
@@ -239,29 +158,16 @@ class MRLFADS(pl.LightningModule):
         kl_ramp_m = self._compute_ramp(hps.kl_start_epoch_m, hps.kl_increase_epoch_m)
         
         # Calculate all losses
-        mr_loss = 0
-        mr_r2 = 0
+        mr_loss, mr_recon, mr_l2, mr_kl, mr_r2 = 0, 0, 0, 0, 0
         recon_start = hps.ic_enc_seq_len
         for area_name, area in self.areas.items():
-            # Recon loss
+            
+            # Compute + process reconstruction loss
             rates_split = torch.split(self.save_var[area_name].outputs, batch_sizes)
             recon_all = [area.recon[s].compute_loss(
                 batch[s].recon_data[area_name][:,recon_start:],
                 area.recon[s].reshape_output_params(rates_split[s]))
             for s in sessions]
-            
-            # Compute r-squared
-            r2 = []
-            for s in sessions:
-                area_recon = batch[s].recon_data[area_name][:,recon_start:]
-                area_infer = self.save_var[area_name].outputs # TODO: Works because there is only 1 session now
-                area_base = torch.mean(area_recon.float(), dim=1, keepdim=True).repeat(1, hps.recon_seq_len - hps.ic_enc_seq_len, 1) + 1e-16
-                loss_model = area.recon[s].compute_loss(area_recon, area.recon[s].reshape_output_params(area_infer))
-                loss_null = area.recon[s].compute_loss(area_recon, area.recon[s].reshape_output_params(area_base))
-                r2.append( (1 - loss_model / loss_null).mean().item() )
-            r2 = np.mean(r2)
-            
-            # Apply loss processing
             recon_all = [aug_stack.process_losses(
                 recon_all[s],
                 (area_name, batch[s].recon_data[area_name][:,recon_start:]),
@@ -272,17 +178,31 @@ class MRLFADS(pl.LightningModule):
             if not hps.recon_reduce_mean: recon_all = [torch.sum(ra, dim=(1, 2)) for ra in recon_all] # uses sum, not mean (except batch dim)
             sess_recon = [ra.mean() for ra in recon_all]
             recon = torch.mean(torch.stack(sess_recon))
+            mr_recon += recon
             
-            # L2 loss
+            # Compute r-squared
+            r2 = []
+            for s in sessions:
+                area_recon = batch[s].recon_data[area_name][:,recon_start:]
+                area_infer = self.save_var[area_name].outputs
+                area_base = torch.mean(area_recon.float(), dim=1, keepdim=True).repeat(1, hps.recon_seq_len - hps.ic_enc_seq_len, 1) + 1e-16
+                loss_model = area.recon[s].compute_loss(area_recon, area.recon[s].reshape_output_params(area_infer))
+                loss_null = area.recon[s].compute_loss(area_recon, area.recon[s].reshape_output_params(area_base))
+                r2.append( (1 - loss_model / loss_null).mean().item() )
+            r2 = np.mean(r2)
+            
+            # Compute L2 loss
             l2 = sr_compute_l2_penalty(area, hps)
+            mr_l2 += l2
             
-            # Collect posterior parameters for fast KL calculation
+            # Compute KL loss
             ic_mean, ic_std = torch.split(self.save_var[area_name].ic_params, area.hparams.ic_dim, dim=1)
             co_mean, co_std = torch.split(self.save_var[area_name].co_params, area.hparams.co_dim, dim=2)
             com_mean, com_std = torch.split(self.save_var[area_name].com_params, area.hparams.com_dim, dim=2)
             ic_kl = area.ic_prior(ic_mean, ic_std) * hps.kl_ic_scale
             co_kl = area.co_prior(co_mean, co_std) * hps.kl_co_scale
             com_kl = area.com_prior(com_mean, com_std) * hps.kl_com_scale
+            mr_kl += (ic_kl + co_kl + com_kl)
             
             # Compute the final loss
             sr_loss = hps.loss_scale * (recon + l2_ramp * l2 + kl_ramp_u * (ic_kl + co_kl) + kl_ramp_m * com_kl)
@@ -313,13 +233,10 @@ class MRLFADS(pl.LightningModule):
         # Log scalar metrics
         metrics = {
             f"{split}/loss": mr_loss,
-            f"{split}/recon": recon,
-            f"{split}/l2": l2,
-            f"{split}/kl": ic_kl + co_kl + com_kl,
-            f"{split}/kl/ic": ic_kl,
-            f"{split}/kl/co": co_kl,
-            f"{split}/kl/com": com_kl,
-            f"{split}/r2": r2,
+            f"{split}/recon": mr_recon,
+            f"{split}/l2": mr_l2,
+            f"{split}/kl": mr_kl,
+            f"{split}/r2": mr_r2,
             
             f"{split}/l2/ramp": l2_ramp,
             f"{split}/kl/ramp_u": kl_ramp_u,
@@ -452,6 +369,51 @@ class MRLFADS(pl.LightningModule):
         ramp = (epoch + 1 - start) / (increase + 1)
         return torch.clamp(torch.tensor(ramp), 0, 1)
 
+
+class SRLFADS(nn.Module):
+    def __init__(
+        self,
+        area_name,
+        reconstruction: nn.ModuleList,
+        co_prior: nn.Module,
+        ic_prior: nn.Module,
+        com_prior: nn.Module,
+        readin: nn.ModuleList,
+        readout: nn.ModuleList,
+        **kwargs,
+    ):
+        super().__init__()
+        
+        hparam_keys = ["total_fac_dim", "encod_data_dim", "encod_seq_len", "recon_seq_len", "ext_input_dim", "ic_enc_seq_len",
+                       "ic_enc_dim", "ci_enc_dim", "ci_lag", "con_dim", "co_dim", "ic_dim", "gen_dim", "fac_dim",
+                       "com_dim", "dropout_rate", "ic_post_var_min", "m_post_var_min", "cell_clip"]
+        hparam_dict = {key: None for key in hparam_keys}
+        hparam_dict.update(kwargs)
+        self.hparams = HParams(hparam_dict)
+        self.hparams.add("co_prior", co_prior)
+        self.name = area_name
+        
+        # Make sure the nn.ModuleList arguments are all the same length
+        assert len(readin) == len(readout) == len(reconstruction)
+        # Make sure that non-variational models use null priors
+        if not self.hparams.variational:
+            assert isinstance(ic_prior, Null) and isinstance(co_prior, Null)
+
+        # Set up model components
+        self.use_con = all([self.hparams.ci_enc_dim > 0, self.hparams.con_dim > 0, self.hparams.co_dim > 0])
+        self.readin = readin
+        self.encoder = SREncoder(self.hparams)
+        self.decoder = SRDecoder(self.hparams)
+        self.icsampler = ICSampler(self.hparams, ic_prior)
+        self.communicator = Communicator(self.hparams, com_prior)
+        self.readout = readout
+        self.recon = reconstruction
+        self.ic_prior = ic_prior
+        self.co_prior = co_prior
+        self.com_prior = com_prior
+    
+    def forward(self): raise NotImplementedError
+    
                 
 # ===== Original LFADS =====#
 
