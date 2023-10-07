@@ -204,7 +204,7 @@ class SRDecoder(nn.Module):
         hps = self.hparams
         
         con_state, gen_state, factor = torch.split(h_0.float(), [hps.con_dim, hps.gen_dim, hps.fac_dim], dim=1)
-        ci_step, com_step = torch.split(input.float(), [hps.ci_enc_dim, hps.com_dim], dim=1)
+        ci_step, com_step, _ = torch.split(input.float(), [hps.ci_enc_dim, hps.com_dim, hps.co_dim], dim=1)
 
         if self.use_con:
             # Compute controller inputs with dropout
@@ -230,4 +230,4 @@ class SRDecoder(nn.Module):
         factor = self.fac_linear(gen_state_drop)
         
         hidden = torch.cat([con_state, gen_state, factor], dim=1)
-        return hidden, torch.cat([co_mean, co_std], dim=1)
+        return hidden, torch.cat([co_mean, co_std], dim=1), con_output # TODO: Assumes use_con is true!

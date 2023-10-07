@@ -1,4 +1,5 @@
 import hydra
+import numpy as np
 import pytorch_lightning as pl
 import torch
 from torch import nn
@@ -186,15 +187,17 @@ class MRLFADS(pl.LightningModule):
                 # communicator
                 factor_compliment = self.exclude_factor(factor_cat, ia)
                 com_samp, com_params = area.communicator(factor_compliment, sample_posteriors=sample_posteriors)
-                self.save_var[area_name].inputs[:, t, -area.hparams.com_dim:] = com_samp
+                self.save_var[area_name].inputs[:, t, area.hparams.ci_enc_dim:-area.hparams.co_dim] = com_samp
                 self.save_var[area_name].com_params[:,t,:] = com_params
                 
                 # decoder
                 states = self.save_var[area_name].states[:,t,:].clone()
                 inputs = self.save_var[area_name].inputs[:,t,:]
-                new_state, co_params = area.decoder(inputs, states, sample_posteriors=sample_posteriors)   
+                new_state, co_params, con_samp = area.decoder(inputs, states, sample_posteriors=sample_posteriors)   
                 self.save_var[area_name].states[:,t+1,:] = new_state
                 self.save_var[area_name].co_params[:,t,:] = co_params
+                self.save_var[area_name].inputs[:,t,-area.hparams.co_dim:] = con_samp
+                
                 
                 # readout
                 factor_state = new_state[..., -area.hparams.fac_dim:]
@@ -206,8 +209,8 @@ class MRLFADS(pl.LightningModule):
             # Reset
             factor_cat = factor_cat_new
                 
-        # Post process states, remove the very first state
-        for area_name in self.area_names: self.save_var[area_name].states = self.save_var[area_name].states[:,1:,:]
+        # Post process states, remove the very first state # TODO: doesn't remove the first state now
+        # for area_name in self.area_names: self.save_var[area_name].states = self.save_var[area_name].states[:,1:,:]
         return self.save_var
                 
     def _shared_step(self, batch, batch_idx, split):
@@ -216,7 +219,7 @@ class MRLFADS(pl.LightningModule):
         
         # Process Augmentations
         sessions = sorted(batch.keys())
-        aug_stack = self.hparams.train_aug_stack if split == "train" else self.hparams.infer_aug_stack
+        aug_stack = hps.train_aug_stack if split == "train" else self.hparams.infer_aug_stack
         batch = {s: b[0] for s, b in batch.items()}
         batch = {s: aug_stack.process_batch(batch[s]) for s in sessions}
         batch_sizes = [batch[s].encod_data[self.area_names[0]].size(0) for s in sessions]
@@ -226,8 +229,8 @@ class MRLFADS(pl.LightningModule):
         # Forward pass
         self.forward(
             batch,
-            sample_posteriors=hps.variational and split == "train",
-            output_means=True,
+            sample_posteriors = hps.variational and split == "train",
+            output_means = True,
         )
         
         # Compute ramping coefficients
@@ -237,6 +240,7 @@ class MRLFADS(pl.LightningModule):
         
         # Calculate all losses
         mr_loss = 0
+        mr_r2 = 0
         recon_start = hps.ic_enc_seq_len
         for area_name, area in self.areas.items():
             # Recon loss
@@ -245,6 +249,18 @@ class MRLFADS(pl.LightningModule):
                 batch[s].recon_data[area_name][:,recon_start:],
                 area.recon[s].reshape_output_params(rates_split[s]))
             for s in sessions]
+            
+            # Compute r-squared
+            r2 = []
+            for s in sessions:
+                area_recon = batch[s].recon_data[area_name][:,recon_start:]
+                area_infer = save_var[area_name].outputs # TODO: Works because there is only 1 session now
+                loss_model = area.recon.compute_loss(area_recon, area.recon[s].reshape_output_params(area_infer))
+                loss_null = -area.loss_recon_func(
+                    area_recon, 
+                    torch.mean(area_recon, dim=1, keepdim=True).repeat(1, hps.recon_seq_len - hps.ic_enc_seq_len, 1) + 1e-16)
+                r2.append( (1 - loss_model / loss_null).item() )
+            r2 = np.mean(r2)
             
             # Apply loss processing
             recon_all = [aug_stack.process_losses(
@@ -272,12 +288,30 @@ class MRLFADS(pl.LightningModule):
             # Compute the final loss
             sr_loss = hps.loss_scale * (recon + l2_ramp * l2 + kl_ramp_u * (ic_kl + co_kl) + kl_ramp_m * com_kl)
             mr_loss += sr_loss
+            mr_r2 += r2
+            
+            # Log area-speific information when on validation
+            if split == "valid":
+                area_metrics = {
+                    f"{area_name}/recon": recon,
+                    f"{area_name}/l2": l2,
+                    f"{area_name}/kl/ic": ic_kl,
+                    f"{area_name}/kl/co": co_kl,
+                    f"{area_name}/kl/com": com_kl,
+                    f"{area_name}/r2": r2,
+                }
+                self.log_dict(
+                    area_metrics,
+                    on_step=False,
+                    on_epoch=True,
+                    batch_size=sum(batch_sizes),
+                )
             
         # Get metrics to log
         optimizer = self.optimizers()
         lr = optimizer.param_groups[0]['lr']
             
-        # Log metrics
+        # Log scalar metrics
         metrics = {
             f"{split}/loss": mr_loss,
             f"{split}/recon": recon,
@@ -286,6 +320,7 @@ class MRLFADS(pl.LightningModule):
             f"{split}/kl/ic": ic_kl,
             f"{split}/kl/co": co_kl,
             f"{split}/kl/com": com_kl,
+            f"{split}/r2": r2,
             
             f"{split}/l2/ramp": l2_ramp,
             f"{split}/kl/ramp_u": kl_ramp_u,
@@ -399,7 +434,7 @@ class MRLFADS(pl.LightningModule):
             self.save_var[area_name] = SaveVariables(
                 # states has 1 extra time in the beginning, will be removed in the end
                 states = torch.zeros(batch_size, target_len+1, hps.con_dim + hps.gen_dim + hps.fac_dim).to(self.device),
-                inputs = torch.zeros(batch_size, target_len, hps.ci_enc_dim + hps.com_dim).to(self.device),
+                inputs = torch.zeros(batch_size, target_len, hps.ci_enc_dim + hps.com_dim + hps.co_dim).to(self.device),
                 outputs = torch.zeros(batch_size, target_len, hps.encod_data_dim).to(self.device),
                 
                 ic_params = torch.zeros(batch_size, 2 * hps.ic_dim).to(self.device),

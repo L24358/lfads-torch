@@ -1,6 +1,7 @@
 import hydra
 import torch
 import numpy as np
+import matplotlib.pyplot as plt
 from omegaconf import DictConfig
 from typing import List
 from .tuples import SessionBatch
@@ -87,6 +88,39 @@ class HParams:
         for key, value in hparams.items(): setattr(self, key, value)
         
     def add(self, key, value): setattr(self, key, value)
+    
+def common_label(fig, xlabel, ylabel):
+    """
+    Put a common `xlabel`, `ylabel` on the figure `fig`.
+    
+    Args:
+        - fig (pyplot.figure): figure to perform operation on
+        - xlabel (str)
+        - ylabel (str)
+    """
+    # Add a big axis, hide frame
+    fig.add_subplot(111, frameon=False)
+
+    # Hide tick and tick label of the big axis
+    plt.tick_params(labelcolor='none', which='both', top=False, bottom=False, left=False, right=False)
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    
+def common_col_title(fig, titles, shape):
+    """
+    Put common column titles `titles` on the figure `fig`.
+    
+    Args:
+        - fig (pyplot.figure): figure to perform operation on
+        - titles (list): list of titles for each column
+        - shape (array-like): shape = (2,) indicates the (row, column) dimensions of the figure
+    """
+    N1, N2 = shape
+    for n in range(N2):
+        ax = fig.add_subplot(N1, N2, n+1, frameon=False)
+        plt.tick_params(labelcolor='none', which='both', top=False, bottom=False, left=False, right=False)
+        ax.set_title(titles[n])
+    return fig
         
 # def get_insert_func(sizes):
 #     data_ends = np.cumsum(sizes)

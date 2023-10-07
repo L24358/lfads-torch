@@ -1,5 +1,4 @@
 import io
-
 import matplotlib.pyplot as plt
 import numpy as np
 import pytorch_lightning as pl
@@ -10,17 +9,10 @@ from sklearn.decomposition import PCA
 from scipy.ndimage import gaussian_filter1d
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
-from .utils import send_batch_to_device
+from .utils import send_batch_to_device, common_label, common_col_title
 
 plt.switch_backend("Agg")
-
-def log_scalar(event_acc, tag):
-    print(event_acc.Tags())
-    # import pdb; pdb.set_trace()
-    # scalar_events = event_acc.Scalars(tag)
-    # for event in scalar_events:
-    #     print(f"Step {event.step}: {tag} = {event.value}")
-    # import pdb; pdb.set_trace()
+    
     
 class OnInitEndCalls(pl.Callback):
     """
@@ -46,13 +38,22 @@ class OnInitEndCalls(pl.Callback):
         self.ran = True
         
         
-class OnValidationEndCalls(pl.Callback):
+class OnEpochEndCalls(pl.Callback):
     """
     Callbacks that are for on_valid_epoch_end.
     """
-    def __init__(self, callbacks, priority=1):
+    def __init__(self, callbacks, in_train, priority=1):
         self.priority = priority
         self.callbacks = callbacks
+        self.in_train = in_train
+        assert len(in_train) == len(callbacks)
+        
+    def on_train_epoch_end(self, trainer, pl_module):
+        kwargs = {}
+        for i, callback in enumerate(self.callbacks):
+            if int(self.in_train[i]):
+                callback.run(trainer, pl_module, **kwargs)
+                if isinstance(callback, Log): kwargs.update({"log_metrics": callback.metrics})
         
     def on_validation_epoch_end(self, trainer, pl_module):
         # Common operations
@@ -112,6 +113,7 @@ class InferredRatesPlot:
         # Get units
         batch, save_var = kwargs["batch"], kwargs["save_var"]
         units = pl_module.maximum_activity_units(self.n_samples)
+        ic_enc_seq_len = pl_module.hparams.ic_enc_seq_len
         
         # Create subplots
         n_rows, n_cols = len(pl_module.area_names) * self.n_samples, self.n_batches
@@ -122,28 +124,26 @@ class InferredRatesPlot:
             sharey="row",
             figsize=(3 * n_cols, 2 * n_rows),
         )
+        common_label(fig, "time step", "rates")
+        common_col_title(fig, ["Batch {i}" for i in range(n_cols)], (n_rows, n_cols))
+        
+        # Iterate through areas and take n_sample neurons
+        count = 0
+        for area_name in pl_module.area_names:
+            recon_data = batch.recon_data[area_name].detach().cpu().numpy()[ic_enc_seq_len:]
+            infer_data = torch.exp(save_var[area_name].outputs.detach().cpu()).numpy()
 
-        # For the first ``n_batches`` batches:
-        for ib, ax_col in enumerate(axes.T):
-            count = 0
-
-            # Iterate through areas and take n_sample neurons
-            for area_name in pl_module.area_names:
-                recon_data = batch.recon_data[area_name].detach().cpu().numpy()
-                infer_data = save_var[area_name].outputs.detach().cpu().numpy()
+            for jn in units[area_name]:
                 
-                for jn in units[area_name]:
-                    ax_col[count].plot(infer_data[ib, :, jn], "b")
-                    ax_col[count].plot(self.smoothing_func(recon_data[ib, :, jn]), "k--")
-                    count += 1
+                for ib in range(self.n_batches):
+                    axes[count][ib].plot(infer_data[ib, :, jn], "b")
+                    axes[count][ib].plot(self.smoothing_func(recon_data[ib, :, jn]), "k--")
+                    
+                axes[count][0].set_ylabel(f"area {area_name}, neuron #{jn}")
+                count += 1
 
         plt.tight_layout()
-        log_figure(
-                trainer.loggers,
-                f"{pl_module.current_split}/inferred_rates_plot",
-                fig,
-                trainer.global_step,
-            )
+        plt.savefig(f"/root/capsule/results/inferred_rates_plot_epoch{trainer.current_epoch}.png")
 
 class PSTHPlot:
     """
@@ -165,6 +165,7 @@ class PSTHPlot:
         batch, save_var = kwargs["batch"], kwargs["save_var"]
         units = pl_module.maximum_activity_units(self.n_samples)
         categories, cond_indices = pl_module.conditions
+        ic_enc_seq_len = pl_module.hparams.ic_enc_seq_len
             
         # Create subplots
         n_rows, n_cols = len(pl_module.area_names) * self.n_samples, len(categories)
@@ -183,8 +184,8 @@ class PSTHPlot:
 
             # Iterate through areas and take n_sample neurons
             for area_name in pl_module.area_names:
-                recon_data = batch.recon_data[area_name].detach().cpu().numpy()
-                infer_data = save_var[area_name].outputs.detach().cpu().numpy()
+                recon_data = batch.recon_data[area_name].detach().cpu().numpy()[ic_enc_seq_len:]
+                infer_data = torch.exp(save_var[area_name].outputs.detach().cpu()).numpy() # TODO: exp
 
                 for jn in units[area_name]:
                     ax_col[count].plot(infer_data[included_batches, :, jn].mean(axis=0), "b")
@@ -205,12 +206,7 @@ class PSTHPlot:
                     count += 1
 
         plt.tight_layout()
-        log_figure(
-                trainer.loggers,
-                f"{pl_module.current_split}/psth_plot",
-                fig,
-                trainer.global_step,
-            )
+        plt.savefig(f"/root/capsule/results/psth_plot_epoch{trainer.current_epoch}.png")
 
 class ProctorSummaryPlot:
     def __init__(self, log_every_n_epochs=10):
@@ -229,9 +225,11 @@ class ProctorSummaryPlot:
         hps = pl_module.hparams
         epochs = np.arange(0, trainer.max_epochs)
         log_metrics = kwargs["log_metrics"]
+        batch, save_var = kwargs["batch"], kwargs["save_var"]
+        seq_len = hps.recon_seq_len - hps.ic_enc_seq_len
     
         # Create subplots
-        n_rows, n_cols = 2, 4
+        n_rows, n_cols = 5, 2
         fig, axes = plt.subplots(
             n_rows,
             n_cols,
@@ -239,55 +237,128 @@ class ProctorSummaryPlot:
             sharey=False,
             figsize=(3 * n_cols, 2 * n_rows),
         )
+        common_label(fig, "epochs", "")
     
         # Plot lowest possible learning rate
         axes[0][0].plot(log_metrics["lr-AdamW"], "k")
         axes[0][0].set_title("Learning Rate History")
-        axes[0][0].set_xlabel("epoch")
         axes[0][0].set_ylabel("learning rate")
         
-        axes[0][1].plot(log_metrics["train/loss"], label="train recon")
-        axes[0][1].plot(log_metrics["valid/loss"], label="val recon")
-        axes[0][1].set_xlabel("epoch")
-        axes[0][1].set_ylabel("loss")
-        axes[0][1].set_title("Reconstruction Loss History")
+        # Plot KL divergence ramp history
+        axes[0][1].plot(log_metrics["valid/kl/ramp_u"], "k", label="u")
+        axes[0][1].plot(log_metrics["valid/kl/ramp_m"], "b--", label="m")
+        axes[0][1].set_ylabel("KL divergence")
+        axes[0][1].set_title("KL Divergence History")
+        axes[0][1].legend()
         
-        axes[0][2].plot(log_metrics["train/kl/co"], label="train kl (u)")
-        axes[0][2].plot(log_metrics["valid/kl/co"], label="val kl (u)")
-        axes[0][2].plot(log_metrics["train/kl/com"], label="train kl (m)")
-        axes[0][2].plot(log_metrics["valid/kl/com"], label="val kl (m)")
-        axes[0][2].plot(log_metrics["train/l2"], label="train l2")
-        axes[0][2].plot(log_metrics["valid/l2"], label="val l2")
-        axes[0][2].set_xlabel("epoch")
-        axes[0][2].set_ylabel("loss")
-        axes[0][2].set_title("Regularization Loss History")
+        axes[1][0].plot(log_metrics["train/loss"], label="train recon")
+        axes[1][0].plot(log_metrics["valid/loss"], label="val recon")
+        axes[1][0].set_ylabel("loss")
+        axes[1][0].set_title("Reconstruction Loss History")
         
-        # Plot KL divergence history
-        axes[0][3].plot(log_metrics["valid/kl/ramp_u"], "k", label="u")
-        axes[0][3].plot(log_metrics["valid/kl/ramp_m"], "b--", label="m")
-        axes[0][3].set_xlabel("epoch")
-        axes[0][3].set_ylabel("KL divergence")
-        axes[0][3].set_title("KL Divergence History")
-        axes[0][3].legend()
+        axes[2][0].plot(log_metrics["train/kl/co"], label="train kl (u)")
+        axes[2][0].plot(log_metrics["valid/kl/co"], label="val kl (u)")
+        axes[2][0].plot(log_metrics["train/kl/com"], label="train kl (m)")
+        axes[2][0].plot(log_metrics["valid/kl/com"], label="val kl (m)")
+        axes[2][0].set_ylabel("loss")
+        axes[2][0].set_title("KL Divergence Loss History")
         
-        import pdb; pdb.set_trace()
-        for area_name in pl_module.area_names:
-            axes[4].plot([], label=area_name)
-        axes[4].set_xlabel("steps")
-        axes[4].set_ylabel("pseudo r-squared")
-        axes[4].set_title("Pseudo R-Squared History")
-        axes[4].legend()
+        axes[3][0].plot(log_metrics["train/l2"], label="train l2")
+        axes[3][0].plot(log_metrics["valid/l2"], label="val l2")
+        axes[3][0].set_ylabel("loss")
+        axes[3][0].set_title("L2 Regularization Loss History")
+        
+        axes[4][0].plot(log_metrics["train/r2"], label="train r2")
+        axes[4][0].plot(log_metrics["valid/r2"], label="val r2")
+        axes[4][0].set_ylabel("loss")
+        axes[4][0].set_title("Pseudo R-Square History")
+        
+        for ia, area_name in enumerate(pl_module.areas):
+            axes[1][1].plot(log_metrics[f"{area_name}/recon"], label=area_name)
+            axes[2][1].plot(log_metrics[f"{area_name}/kl/co"] + log_metrics[f"{area_name}/kl/com"], label=area_name)
+            axes[3][1].plot(log_metrics[f"{area_name}/l2"], label=area_name)
+            axes[4][1].plot(log_metrics[f"{area_name}/r2"], label=area_name)
+        axes[2][1].set_title("Reconstruction Loss History")
+        axes[3][1].set_title("KL Divergence Loss History")
+        axes[4][1].set_title("Pseudo R-Square History")
+        axes[2][1].legend()
+        axes[3][1].legend()
+        axes[4][1].legend()
         
         plt.tight_layout()
-        log_figure(
-                trainer.loggers,
-                f"proctor_summary/epoch{trainer.current_epoch}",
-                fig,
-                trainer.global_step,
-            )
+        plt.savefig(f"/root/capsule/results/proctor_summary_plot_epoch{trainer.current_epoch}.png")
+
+
+class CommunicationPSTHPlot:
+    """
+    Plot Inferred Input and Communication PSTH plots for all areas.
+    """
+    def __init__(self, log_every_n_epochs=10):
+        self.log_every_n_epochs = log_every_n_epochs
         
-    @staticmethod
-    def cat_and_detach(tensor): return torch.cat(tensor).cpu().detach().numpy()
+    def run(self, trainer, pl_module, **kwargs):
+        # Check for conditions to not run
+        if (trainer.current_epoch % self.log_every_n_epochs) != 0:
+            return
+        if not has_image_loggers(trainer.loggers):
+            return
+        
+        # Get data and outputs
+        batch, save_var = kwargs["batch"], kwargs["save_var"]
+        categories, cond_indices = pl_module.conditions
+        log_metrics = kwargs["log_metrics"]
+            
+        # Create subplots
+        n_rows, n_cols = len(pl_module.area_names) * 4, len(categories)
+        fig, axes = plt.subplots(
+            n_rows,
+            n_cols,
+            sharex=True,
+            sharey="row",
+            figsize=(3 * n_cols, 2 * n_rows),
+        )
+
+        # For each condition (category):
+        for ic, ax_col in enumerate(axes.T):
+            count = 0
+            included_batches = cond_indices[ic]
+
+            # Iterate through areas and take n_sample neurons
+            for area_name, area in pl_module.areas.items():
+                inputs = save_var[area_name].inputs.detach().cpu()
+                ci_enc_dim, com_dim, co_dim = area.hparams.ci_enc_dim, area.hparams.com_dim, area.hparams.co_dim
+                _, com, co = torch.split(inputs, [ci_enc_dim, com_dim, co_dim], dim=2)
+
+                # Plot co
+                for ico in range(co_dim):
+                    ax_col[count].plot(co[included_batches, :, ico].mean(axis=0))
+                ax_col[count].set_ylabel(f"{area_name}, u")
+                ax_col[count].set_title(categories[ic].replace("_", ", "))
+                count += 1
+                
+                # Plot kl (co)
+                # for ico in range(co_dim):
+                #     ax_col[count].plot(log_metrics["valid/kl/co"])
+                # ax_col[count].set_ylabel(f"{area_name}, kl(u)")
+                # ax_col[count].set_title(categories[ic].replace("_", ", "))
+                count += 1
+                
+                # Plot co
+                for icom in range(com_dim):
+                    ax_col[count].plot(com[included_batches, :, icom].mean(axis=0))
+                ax_col[count].set_ylabel(f"{area_name}, m")
+                ax_col[count].set_title(categories[ic].replace("_", ", "))
+                count += 1
+                
+                # Plot kl (com)
+                # for icom in range(com_dim):
+                #     ax_col[count].plot(log_metrics["valid/kl/com"])
+                # ax_col[count].set_ylabel(f"{area_name}, kl(m)")
+                # ax_col[count].set_title(categories[ic].replace("_", ", "))
+                count += 1
+
+        plt.tight_layout()
+        plt.savefig(f"/root/capsule/results/communication_plot_epoch{trainer.current_epoch}.png")
         
 # ===== Functions that are on_init_end ===== #
         
@@ -307,9 +378,6 @@ def get_conditions(trainer, pl_module, batch, info_strings):
     pl_module.conditions = (categories, unique_indices)
         
 def proctor_preview_plot(trainer, pl_module):
-    # Only compute this once
-    if hasattr(pl_module, "conditions"): return
-
     # Access hyperparameters
     hps = pl_module.hparams
     epochs = np.arange(0, trainer.max_epochs)
@@ -323,6 +391,7 @@ def proctor_preview_plot(trainer, pl_module):
         sharey="row",
         figsize=(3 * n_cols, 2 * n_rows),
     )
+    common_label(fig, "epochs", "")
 
     # Plot lowest possible learning rate
     if hps.lr_scheduler:
@@ -346,12 +415,7 @@ def proctor_preview_plot(trainer, pl_module):
     axes[1].legend()
 
     plt.tight_layout()
-    log_figure(
-            trainer.loggers,
-            f"proctor_preview",
-            fig,
-            trainer.global_step,
-        )
+    plt.savefig(f"/root/capsule/results/proctor_preview.png")
     
 # ===== Original plotting functions by Andrew ===== #
 
