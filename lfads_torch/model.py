@@ -254,12 +254,11 @@ class MRLFADS(pl.LightningModule):
             r2 = []
             for s in sessions:
                 area_recon = batch[s].recon_data[area_name][:,recon_start:]
-                area_infer = save_var[area_name].outputs # TODO: Works because there is only 1 session now
-                loss_model = area.recon.compute_loss(area_recon, area.recon[s].reshape_output_params(area_infer))
-                loss_null = -area.loss_recon_func(
-                    area_recon, 
-                    torch.mean(area_recon, dim=1, keepdim=True).repeat(1, hps.recon_seq_len - hps.ic_enc_seq_len, 1) + 1e-16)
-                r2.append( (1 - loss_model / loss_null).item() )
+                area_infer = self.save_var[area_name].outputs # TODO: Works because there is only 1 session now
+                area_base = torch.mean(area_recon.float(), dim=1, keepdim=True).repeat(1, hps.recon_seq_len - hps.ic_enc_seq_len, 1) + 1e-16
+                loss_model = area.recon[s].compute_loss(area_recon, area.recon[s].reshape_output_params(area_infer))
+                loss_null = area.recon[s].compute_loss(area_recon, area.recon[s].reshape_output_params(area_base))
+                r2.append( (1 - loss_model / loss_null).mean().item() )
             r2 = np.mean(r2)
             
             # Apply loss processing

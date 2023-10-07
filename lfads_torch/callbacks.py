@@ -130,7 +130,7 @@ class InferredRatesPlot:
         # Iterate through areas and take n_sample neurons
         count = 0
         for area_name in pl_module.area_names:
-            recon_data = batch.recon_data[area_name].detach().cpu().numpy()[ic_enc_seq_len:]
+            recon_data = batch.recon_data[area_name].detach().cpu().numpy()[:, ic_enc_seq_len:]
             infer_data = torch.exp(save_var[area_name].outputs.detach().cpu()).numpy()
 
             for jn in units[area_name]:
@@ -184,7 +184,7 @@ class PSTHPlot:
 
             # Iterate through areas and take n_sample neurons
             for area_name in pl_module.area_names:
-                recon_data = batch.recon_data[area_name].detach().cpu().numpy()[ic_enc_seq_len:]
+                recon_data = batch.recon_data[area_name].detach().cpu().numpy()[:, ic_enc_seq_len:]
                 infer_data = torch.exp(save_var[area_name].outputs.detach().cpu()).numpy() # TODO: exp
 
                 for jn in units[area_name]:
@@ -317,6 +317,7 @@ class CommunicationPSTHPlot:
             sharey="row",
             figsize=(3 * n_cols, 2 * n_rows),
         )
+        common_col_title(fig, categories, (n_rows, n_cols))
 
         # For each condition (category):
         for ic, ax_col in enumerate(axes.T):
@@ -325,40 +326,62 @@ class CommunicationPSTHPlot:
 
             # Iterate through areas and take n_sample neurons
             for area_name, area in pl_module.areas.items():
+                hps = area.hparams
                 inputs = save_var[area_name].inputs.detach().cpu()
-                ci_enc_dim, com_dim, co_dim = area.hparams.ci_enc_dim, area.hparams.com_dim, area.hparams.co_dim
+                ci_enc_dim, com_dim, co_dim = hps.ci_enc_dim, hps.com_dim, hps.co_dim
                 _, com, co = torch.split(inputs, [ci_enc_dim, com_dim, co_dim], dim=2)
 
                 # Plot co
                 for ico in range(co_dim):
                     ax_col[count].plot(co[included_batches, :, ico].mean(axis=0))
                 ax_col[count].set_ylabel(f"{area_name}, u")
-                ax_col[count].set_title(categories[ic].replace("_", ", "))
                 count += 1
                 
                 # Plot kl (co)
-                # for ico in range(co_dim):
-                #     ax_col[count].plot(log_metrics["valid/kl/co"])
-                # ax_col[count].set_ylabel(f"{area_name}, kl(u)")
-                # ax_col[count].set_title(categories[ic].replace("_", ", "))
+                co_mean, co_std = torch.split(save_var[area_name].co_params, [hps.co_dim, hps.co_dim], dim=2)
+                co_kl = area.co_prior.kl_divergence_by_component(co_mean, co_std)
+                for ico in range(co_dim):
+                    ax_col[count].plot(co_kl[included_batches, :, ico].mean(axis=0))
+                ax_col[count].set_ylabel(f"{area_name}, kl (u)")
                 count += 1
                 
                 # Plot co
                 for icom in range(com_dim):
                     ax_col[count].plot(com[included_batches, :, icom].mean(axis=0))
                 ax_col[count].set_ylabel(f"{area_name}, m")
-                ax_col[count].set_title(categories[ic].replace("_", ", "))
                 count += 1
                 
                 # Plot kl (com)
-                # for icom in range(com_dim):
-                #     ax_col[count].plot(log_metrics["valid/kl/com"])
-                # ax_col[count].set_ylabel(f"{area_name}, kl(m)")
-                # ax_col[count].set_title(categories[ic].replace("_", ", "))
+                com_mean, com_std = torch.split(save_var[area_name].co_params, [hps.com_dim, hps.com_dim], dim=2)
+                com_kl = area.co_prior.kl_divergence_by_component(com_mean, com_std)
+                for icom in range(com_dim):
+                    ax_col[count].plot(com_kl[included_batches, :, ico].mean(axis=0))
+                ax_col[count].set_ylabel(f"{area_name}, kl (m)")
                 count += 1
 
         plt.tight_layout()
         plt.savefig(f"/root/capsule/results/communication_plot_epoch{trainer.current_epoch}.png")
+        
+class ICPCAPlot:
+    def __init__(self, log_every_n_epochs=10):
+        self.log_every_n_epochs = log_every_n_epochs
+        
+    def run(self, trainer, pl_module, **kwargs):
+        # Check for conditions to not run
+        if (trainer.current_epoch % self.log_every_n_epochs) != 0:
+            return
+        if not has_image_loggers(trainer.loggers): # TODO: don't need this anymore
+            return
+        
+        batch, save_var = kwargs["batch"], kwargs["save_var"]
+        
+        for area_name, area in pl_module.areas.items():
+            hps = area.hparams
+            ics = save_var["area_name"].states[:, 0, -fps.fac_dim:]
+            
+            ## TODO
+            import pdb; pdb.set_trace()
+        
         
 # ===== Functions that are on_init_end ===== #
         
