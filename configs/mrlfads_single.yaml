@@ -35,14 +35,14 @@ callbacks:
     logging_interval: epoch
 
 logger:
-  csv_logger:
-    _target_: pytorch_lightning.loggers.CSVLogger
-    save_dir: "csv_logs"
-    version: ""
-    name: ""
   tensorboard_logger:
     _target_: pytorch_lightning.loggers.TensorBoardLogger
     save_dir: "/results/lfads-torch-example/nlb_mc_maze/231006_exampleSingle" # "."
+    version: ""
+    name: ""
+  csv_logger:
+    _target_: pytorch_lightning.loggers.CSVLogger
+    save_dir: "csv_logs"
     version: ""
     name: ""
 

@@ -18,7 +18,8 @@ class OnInitEndCalls(pl.Callback):
     """
     Callbacks that are for on_init_end, but have to be called on_valid_epoch_start to access trainer and pl_module.
     """
-    def __init__(self, priority=1):
+    def __init__(self,
+                 priority: int = 1):
         self.priority = priority
         self.ran = False
         
@@ -28,21 +29,24 @@ class OnInitEndCalls(pl.Callback):
         # Common operations
         dataloader = trainer.datamodule.val_dataloader()
         s = 0 # TODO: only using the first session
-        batch, info_strings = next(iter(dataloader))[s] # only one single batch
+        batch, info_strings = next(iter(dataloader))[s]
         
         # Run functions here
         get_maximum_activity_units(trainer, pl_module, batch) 
         get_conditions(trainer, pl_module, batch, info_strings)
         proctor_preview_plot(trainer, pl_module)
         
-        self.ran = True
+        self.ran = True # run only once
         
         
 class OnEpochEndCalls(pl.Callback):
     """
-    Callbacks that are for on_valid_epoch_end.
+    Callbacks that are for on_train_epoch_end or on_valid_epoch_end.
     """
-    def __init__(self, callbacks, in_train, priority=1):
+    def __init__(self,
+                 callbacks: list,
+                 in_train: str,
+                 priority: int = 1):
         self.priority = priority
         self.callbacks = callbacks
         self.in_train = in_train
@@ -52,24 +56,27 @@ class OnEpochEndCalls(pl.Callback):
         kwargs = {}
         for i, callback in enumerate(self.callbacks):
             if int(self.in_train[i]):
-                callback.run(trainer, pl_module, **kwargs)
-                if isinstance(callback, Log): kwargs.update({"log_metrics": callback.metrics})
+                new_kwargs = callback.run(trainer, pl_module, **kwargs)
+                kwargs.update(new_kwargs)
         
-    def on_validation_epoch_end(self, trainer, pl_module):
+    def on_validation_epoch_end(self,
+                                trainer,
+                                pl_module):
         # Common operations
-        s = 0 # TODO: using the first session only, should change to concatenate all sessions in batch
+        s = 0 # TODO: using the first session only
         batch = pl_module.current_batch[s]
         save_var = pl_module.save_var
         kwargs = {"batch": batch, "save_var": save_var}
         
         for callback in self.callbacks:
-            callback.run(trainer, pl_module, **kwargs)
-            if isinstance(callback, Log): kwargs.update({"log_metrics": callback.metrics})
+            new_kwargs = callback.run(trainer, pl_module, **kwargs)
+            kwargs.update(new_kwargs)
     
 # ===== Classes that are on_validation_epoch_end ===== #
 
 class Log:
-    def __init__(self, tags=[]):
+    def __init__(self,
+                 tags: list = []):
         self.metrics = defaultdict(list)
         self.tags = tags
     
@@ -77,7 +84,7 @@ class Log:
         new_metrics = trainer.logged_metrics
         self.update_dict(self.metrics, new_metrics)
         
-        log_dir = trainer.loggers[1].log_dir # TODO: cannot specify index
+        log_dir = trainer.loggers[0].log_dir # Tensorboard logger has to be 1st logger
         event_acc = EventAccumulator(log_dir)
         event_acc.Reload()
         for tag in self.tags:
@@ -87,6 +94,7 @@ class Log:
                 self.metrics[tag] = values
             else:
                 self.metrics[tag] = []
+        return {"log_metrics": self.metrics}
         
     @staticmethod
     def update_dict(old_dict, new_dict):
@@ -106,8 +114,6 @@ class InferredRatesPlot:
     def run(self, trainer, pl_module, **kwargs):
         # Check for conditions to not run
         if (trainer.current_epoch % self.log_every_n_epochs) != 0:
-            return
-        if not has_image_loggers(trainer.loggers):
             return
 
         # Get units
@@ -144,6 +150,7 @@ class InferredRatesPlot:
 
         plt.tight_layout()
         plt.savefig(f"/root/capsule/results/inferred_rates_plot_epoch{trainer.current_epoch}.png")
+        return {}
 
 class PSTHPlot:
     """
@@ -157,8 +164,6 @@ class PSTHPlot:
     def run(self, trainer, pl_module, **kwargs):
         # Check for conditions to not run
         if (trainer.current_epoch % self.log_every_n_epochs) != 0:
-            return
-        if not has_image_loggers(trainer.loggers):
             return
         
         # Get data and outputs
@@ -207,6 +212,7 @@ class PSTHPlot:
 
         plt.tight_layout()
         plt.savefig(f"/root/capsule/results/psth_plot_epoch{trainer.current_epoch}.png")
+        return {}
 
 class ProctorSummaryPlot:
     def __init__(self, log_every_n_epochs=10):
@@ -293,7 +299,7 @@ class ProctorSummaryPlot:
         
         plt.tight_layout()
         plt.savefig(f"/root/capsule/results/proctor_summary_plot_epoch{trainer.current_epoch}.png")
-
+        return {}
 
 class CommunicationPSTHPlot:
     """
@@ -305,8 +311,6 @@ class CommunicationPSTHPlot:
     def run(self, trainer, pl_module, **kwargs):
         # Check for conditions to not run
         if (trainer.current_epoch % self.log_every_n_epochs) != 0:
-            return
-        if not has_image_loggers(trainer.loggers):
             return
         
         # Get data and outputs
@@ -367,6 +371,7 @@ class CommunicationPSTHPlot:
 
         plt.tight_layout()
         plt.savefig(f"/root/capsule/results/communication_plot_epoch{trainer.current_epoch}.png")
+        return {}
         
 class ICPCAPlot:
     def __init__(self, log_every_n_epochs=10):
@@ -375,8 +380,6 @@ class ICPCAPlot:
     def run(self, trainer, pl_module, **kwargs):
         # Check for conditions to not run
         if (trainer.current_epoch % self.log_every_n_epochs) != 0:
-            return
-        if not has_image_loggers(trainer.loggers): # TODO: don't need this anymore
             return
         
         # Get data
@@ -411,6 +414,7 @@ class ICPCAPlot:
             
         plt.tight_layout()
         plt.savefig(f"/root/capsule/results/icpca_plot_epoch{trainer.current_epoch}.png")
+        return {}
         
 # ===== Functions that are on_init_end ===== #
         
