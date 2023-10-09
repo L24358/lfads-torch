@@ -26,9 +26,9 @@ HYPERPARAM_SPACE = {
     "model.dropout_rate": HyperParam(
         0.0, 0.6, explore_wt=0.3, enforce_limits=True, sample_fn="uniform"
     ),
-    # "model.train_aug_stack.transforms.0.cd_rate": HyperParam(
-    #     0.01, 0.7, explore_wt=0.3, enforce_limits=True, init=0.5, sample_fn="uniform"
-    # ),
+    "model.train_aug_stack.transforms.0.cd_rate": HyperParam(
+        0.01, 0.7, explore_wt=0.3, enforce_limits=True, init=0.5, sample_fn="uniform"
+    ),
     "model.kl_co_scale": HyperParam(1e-6, 1e-4, explore_wt=0.8),
     "model.kl_ic_scale": HyperParam(1e-6, 1e-3, explore_wt=0.8),
     "model.kl_com_scale": HyperParam(1e-6, 1e-3, explore_wt=0.8),

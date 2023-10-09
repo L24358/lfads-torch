@@ -455,7 +455,7 @@ def proctor_preview_plot(trainer, pl_module):
         axes[0].plot(epochs, geom(epochs), "k")
         axes[0].set_title(f"Lowest lr: {round(geom(trainer.max_epochs) ,6)}")
     else:
-        axes[0].hline(y=lr_init, xmin=0, xmax=epochs[-1], color='k')
+        axes[0].hlines(y=lr_init, xmin=0, xmax=epochs[-1], color='k')
         axes[0].set_title(f"Lowest lr: {hps.lr_init}")
     axes[0].set_ylabel("learning rate")
 

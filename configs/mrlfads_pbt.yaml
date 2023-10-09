@@ -1,7 +1,7 @@
 defaults:
   - model: SMA5_FMN
   - datamodule: meso
-  - callbacks: default
+  - callbacks: mrlfads
   - _self_
 
 # Use unique initializations for better diversity
