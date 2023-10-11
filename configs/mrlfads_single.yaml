@@ -1,6 +1,6 @@
 defaults:
-  - model: SMA5_FMN
-  - datamodule: meso
+  - model: mrlfads_SMA_FP
+  - datamodule: mrlfads_SMA_FP
   - callbacks: mrlfads
   - _self_
   

@@ -12,6 +12,7 @@ from tensorboard.backend.event_processing.event_accumulator import EventAccumula
 from .utils import send_batch_to_device, common_label, common_col_title
 
 plt.switch_backend("Agg")
+SAVE_DIR = "/root/capsule/results/graphs"
     
     
 class OnInitEndCalls(pl.Callback):
@@ -70,7 +71,7 @@ class OnEpochEndCalls(pl.Callback):
         
         for callback in self.callbacks:
             new_kwargs = callback.run(trainer, pl_module, **kwargs)
-            kwargs.update(new_kwargs)
+            if not isinstance(new_kwargs, type(None)): kwargs.update(new_kwargs)
     
 # ===== Classes that are on_validation_epoch_end ===== #
 
@@ -149,7 +150,7 @@ class InferredRatesPlot:
                 count += 1
 
         plt.tight_layout()
-        plt.savefig(f"/root/capsule/results/inferred_rates_plot_epoch{trainer.current_epoch}.png")
+        plt.savefig(f"{SAVE_DIR}/inferred_rates_plot_epoch{trainer.current_epoch}.png")
         return {}
 
 class PSTHPlot:
@@ -211,7 +212,7 @@ class PSTHPlot:
                     count += 1
 
         plt.tight_layout()
-        plt.savefig(f"/root/capsule/results/psth_plot_epoch{trainer.current_epoch}.png")
+        plt.savefig(f"{SAVE_DIR}/psth_plot_epoch{trainer.current_epoch}.png")
         return {}
 
 class ProctorSummaryPlot:
@@ -239,7 +240,7 @@ class ProctorSummaryPlot:
         fig, axes = plt.subplots(
             n_rows,
             n_cols,
-            sharex=True,
+            sharex=False,
             sharey=False,
             figsize=(3 * n_cols, 2 * n_rows),
         )
@@ -251,22 +252,22 @@ class ProctorSummaryPlot:
         axes[0][0].set_ylabel("learning rate")
         
         # Plot KL divergence ramp history
-        axes[0][1].plot(log_metrics["valid/kl/ramp_u"], "k", label="u")
-        axes[0][1].plot(log_metrics["valid/kl/ramp_m"], "b--", label="m")
+        axes[0][1].plot(log_metrics["valid/kl/ramp/u"], "k", label="u")
+        axes[0][1].plot(log_metrics["valid/kl/ramp/m"], "b--", label="m")
         axes[0][1].set_ylabel("KL divergence")
         axes[0][1].set_title("KL Coefficient History")
         axes[0][1].legend()
         
-        axes[1][0].plot(log_metrics["train/loss"], label="train recon")
-        axes[1][0].plot(log_metrics["valid/loss"], label="val recon")
+        axes[1][0].plot(log_metrics["train/recon"], label="train recon")
+        axes[1][0].plot(log_metrics["valid/recon"], label="val recon")
         axes[1][0].set_ylabel("loss")
         axes[1][0].set_title("Reconstruction Loss History")
         axes[1][0].legend()
         
-        axes[2][0].plot(log_metrics["train/kl/co"], label="train kl (u)")
-        axes[2][0].plot(log_metrics["valid/kl/co"], label="val kl (u)")
-        axes[2][0].plot(log_metrics["train/kl/com"], label="train kl (m)")
-        axes[2][0].plot(log_metrics["valid/kl/com"], label="val kl (m)")
+        axes[2][0].plot(log_metrics["train/kl/u"], label="train kl (u)")
+        axes[2][0].plot(log_metrics["valid/kl/u"], label="val kl (u)")
+        axes[2][0].plot(log_metrics["train/kl/m"], label="train kl (m)")
+        axes[2][0].plot(log_metrics["valid/kl/m"], label="val kl (m)")
         axes[2][0].set_ylabel("loss")
         axes[2][0].set_title("KL Divergence Loss History")
         axes[2][0].legend()
@@ -298,7 +299,7 @@ class ProctorSummaryPlot:
         axes[4][1].legend()
         
         plt.tight_layout()
-        plt.savefig(f"/root/capsule/results/proctor_summary_plot_epoch{trainer.current_epoch}.png")
+        plt.savefig(f"{SAVE_DIR}/proctor_summary_plot_epoch{trainer.current_epoch}.png")
         return {}
 
 class CommunicationPSTHPlot:
@@ -355,22 +356,22 @@ class CommunicationPSTHPlot:
                 ax_col[count].set_ylabel(f"{area_name}, kl (u)")
                 count += 1
                 
-                # Plot co
+                # Plot com
                 for icom in range(com_dim):
                     ax_col[count].plot(com[included_batches, :, icom].mean(axis=0))
                 ax_col[count].set_ylabel(f"{area_name}, m")
                 count += 1
                 
                 # Plot kl (com)
-                com_mean, com_std = torch.split(save_var[area_name].co_params, [hps.com_dim, hps.com_dim], dim=2)
-                com_kl = area.co_prior.kl_divergence_by_component(com_mean[included_batches], com_std[included_batches])
+                com_mean, com_std = torch.split(save_var[area_name].com_params, [hps.com_dim, hps.com_dim], dim=2)
+                com_kl = area.com_prior.kl_divergence_by_component(com_mean[included_batches], com_std[included_batches])
                 for icom in range(com_dim):
-                    ax_col[count].plot(com_kl[:, ico])
+                    ax_col[count].plot(com_kl[:, icom])
                 ax_col[count].set_ylabel(f"{area_name}, kl (m)")
                 count += 1
 
         plt.tight_layout()
-        plt.savefig(f"/root/capsule/results/communication_plot_epoch{trainer.current_epoch}.png")
+        plt.savefig(f"{SAVE_DIR}/communication_plot_epoch{trainer.current_epoch}.png")
         return {}
         
 class ICPCAPlot:
@@ -413,7 +414,7 @@ class ICPCAPlot:
             cbar.set_ticklabels(categories)
             
         plt.tight_layout()
-        plt.savefig(f"/root/capsule/results/icpca_plot_epoch{trainer.current_epoch}.png")
+        plt.savefig(f"{SAVE_DIR}/icpca_plot_epoch{trainer.current_epoch}.png")
         return {}
         
 # ===== Functions that are on_init_end ===== #
@@ -469,7 +470,7 @@ def proctor_preview_plot(trainer, pl_module):
     axes[1].legend()
 
     plt.tight_layout()
-    plt.savefig(f"/root/capsule/results/proctor_preview.png")
+    plt.savefig(f"{SAVE_DIR}/proctor_preview.png")
     
 # ===== Original plotting functions by Andrew ===== #
 

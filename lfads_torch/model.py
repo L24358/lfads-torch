@@ -158,7 +158,7 @@ class MRLFADS(pl.LightningModule):
         kl_ramp_m = self._compute_ramp(hps.kl_start_epoch_m, hps.kl_increase_epoch_m)
         
         # Calculate all losses
-        mr_loss, mr_recon, mr_l2, mr_kl, mr_r2 = 0, 0, 0, 0, 0
+        mr_loss, mr_recon, mr_l2, mr_kl_u, mr_kl_m, mr_r2 = 0, 0, 0, 0, 0, 0
         recon_start = hps.ic_enc_seq_len
         for area_name, area in self.areas.items():
             
@@ -202,7 +202,8 @@ class MRLFADS(pl.LightningModule):
             ic_kl = area.ic_prior(ic_mean, ic_std) * hps.kl_ic_scale
             co_kl = area.co_prior(co_mean, co_std) * hps.kl_co_scale
             com_kl = area.com_prior(com_mean, com_std) * hps.kl_com_scale
-            mr_kl += (ic_kl + co_kl + com_kl)
+            mr_kl_u += (ic_kl + co_kl)
+            mr_kl_m += com_kl
             
             # Compute the final loss
             sr_loss = hps.loss_scale * (recon + l2_ramp * l2 + kl_ramp_u * (ic_kl + co_kl) + kl_ramp_m * com_kl)
@@ -235,12 +236,13 @@ class MRLFADS(pl.LightningModule):
             f"{split}/loss": mr_loss,
             f"{split}/recon": mr_recon,
             f"{split}/l2": mr_l2,
-            f"{split}/kl": mr_kl,
+            f"{split}/kl/u": mr_kl_u,
+            f"{split}/kl/m": mr_kl_m,
             f"{split}/r2": mr_r2,
             
             f"{split}/l2/ramp": l2_ramp,
-            f"{split}/kl/ramp_u": kl_ramp_u,
-            f"{split}/kl/ramp_m": kl_ramp_m,
+            f"{split}/kl/ramp/u": kl_ramp_u,
+            f"{split}/kl/ramp/m": kl_ramp_m,
         }
         if split == "valid":
             # Update the smoothed reconstruction loss
