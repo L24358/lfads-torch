@@ -8,15 +8,11 @@ on_epoch_end_calls:
       tags:
         - "lr-AdamW"
     - _target_: lfads_torch.callbacks.InferredRatesPlot
-      log_every_n_epochs: 10
+      log_every_n_epochs: 1
     - _target_: lfads_torch.callbacks.PSTHPlot
-      log_every_n_epochs: 10
+      log_every_n_epochs: 1
     - _target_: lfads_torch.callbacks.ProctorSummaryPlot
-      log_every_n_epochs: 10
+      log_every_n_epochs: 1
     - _target_: lfads_torch.callbacks.CommunicationPSTHPlot
-      log_every_n_epochs: 10
-    # - _target_: lfads_torch.callbacks.ICPCAPlot
-    #   log_every_n_epochs: 10
-
+      log_every_n_epochs: 1
   in_train: "10000"
-    

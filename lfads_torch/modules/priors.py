@@ -23,7 +23,7 @@ class MultivariateNormal(nn.Module):
         # Create distribution parameter tensors
         means = torch.ones(shape) * mean
         logvars = torch.log(torch.ones(shape) * variance)
-        self.mean = nn.Parameter(means, requires_grad=True)
+        self.mean = nn.Parameter(means, requires_grad=False)
         self.logvar = nn.Parameter(logvars, requires_grad=False)
 
     def make_posterior(self, post_mean, post_std):

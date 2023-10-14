@@ -6,10 +6,8 @@ from pathlib import Path
 from lfads_torch.run_model import run_model
 
 # ---------- OPTIONS -----------
-PROJECT_STR = "lfads-torch-example"
-DATASET_STR = "nlb_mc_maze"
-RUN_TAG = datetime.now().strftime("%y%m%d") + "_exampleSingle"
-RUN_DIR = Path("/root/capsule/results") / PROJECT_STR / DATASET_STR / RUN_TAG
+PROJECT_STR = "mrsingle_" + datetime.now().strftime("%y%m%d%h%m")
+RUN_DIR = Path("/root/capsule/results") / PROJECT_STR
 OVERWRITE = True
 # ------------------------------
 
@@ -22,9 +20,6 @@ shutil.copyfile(__file__, RUN_DIR / Path(__file__).name)
 # Switch to the `RUN_DIR` and train the model
 os.chdir(RUN_DIR)
 run_model(
-    overrides={
-        # "datamodule": DATASET_STR,
-        # "model": DATASET_STR,
-    },
+    overrides={},
     config_path="../configs/mrlfads_single.yaml",
 )

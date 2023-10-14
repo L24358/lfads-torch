@@ -1,4 +1,5 @@
 import io
+import os
 import matplotlib.pyplot as plt
 import numpy as np
 import pytorch_lightning as pl
@@ -33,13 +34,13 @@ class OnInitEndCalls(pl.Callback):
         batch, info_strings = next(iter(dataloader))[s]
         
         # Run functions here
+        os.makedirs(SAVE_DIR, exist_ok=True)
         get_maximum_activity_units(trainer, pl_module, batch) 
         get_conditions(trainer, pl_module, batch, info_strings)
         proctor_preview_plot(trainer, pl_module)
         
         self.ran = True # run only once
-        
-        
+
 class OnEpochEndCalls(pl.Callback):
     """
     Callbacks that are for on_train_epoch_end or on_valid_epoch_end.
@@ -54,12 +55,12 @@ class OnEpochEndCalls(pl.Callback):
         assert len(in_train) == len(callbacks)
         
     def on_train_epoch_end(self, trainer, pl_module):
-        kwargs = {}
+        kwargs = {"log_metrics": self.callbacks[0].metrics} ## Log needs to be the first callback
         for i, callback in enumerate(self.callbacks):
             if int(self.in_train[i]):
                 new_kwargs = callback.run(trainer, pl_module, **kwargs)
-                kwargs.update(new_kwargs)
-        
+                if not isinstance(new_kwargs, type(None)): kwargs.update(new_kwargs)
+            
     def on_validation_epoch_end(self,
                                 trainer,
                                 pl_module):
@@ -67,11 +68,13 @@ class OnEpochEndCalls(pl.Callback):
         s = 0 # TODO: using the first session only
         batch = pl_module.current_batch[s]
         save_var = pl_module.save_var
-        kwargs = {"batch": batch, "save_var": save_var}
+        kwargs = {"batch": batch, "save_var": save_var, "log_metrics": self.callbacks[0].metrics}
         
-        for callback in self.callbacks:
-            new_kwargs = callback.run(trainer, pl_module, **kwargs)
-            if not isinstance(new_kwargs, type(None)): kwargs.update(new_kwargs)
+        for i, callback in enumerate(self.callbacks):
+            if not int(self.in_train[i]):
+                new_kwargs = callback.run(trainer, pl_module, **kwargs)
+                if not isinstance(new_kwargs, type(None)): kwargs.update(new_kwargs)
+
     
 # ===== Classes that are on_validation_epoch_end ===== #
 
@@ -92,7 +95,7 @@ class Log:
             if tag in event_acc.Tags()["scalars"]:
                 scalar_events = event_acc.Scalars(tag)
                 values = [event.value for event in scalar_events]
-                self.metrics[tag] = values
+                self.metrics[tag] = values[1::2]
             else:
                 self.metrics[tag] = []
         return {"log_metrics": self.metrics}
@@ -224,13 +227,14 @@ class ProctorSummaryPlot:
         # Check for conditions to not run
         if (trainer.current_epoch % self.log_every_n_epochs) != 0:
             return
-        if self.count < 1:
+        if self.count < 2:
             self.count += 1
             return
         
         # Access hyperparameters
         hps = pl_module.hparams
         epochs = np.arange(0, trainer.max_epochs)
+        import pdb; pdb.set_trace()
         log_metrics = kwargs["log_metrics"]
         batch, save_var = kwargs["batch"], kwargs["save_var"]
         seq_len = hps.recon_seq_len - hps.ic_enc_seq_len
@@ -308,10 +312,14 @@ class CommunicationPSTHPlot:
     """
     def __init__(self, log_every_n_epochs=10):
         self.log_every_n_epochs = log_every_n_epochs
+        self.count = 0
         
     def run(self, trainer, pl_module, **kwargs):
         # Check for conditions to not run
         if (trainer.current_epoch % self.log_every_n_epochs) != 0:
+            return
+        if self.count < 2:
+            self.count += 1
             return
         
         # Get data and outputs
@@ -351,8 +359,8 @@ class CommunicationPSTHPlot:
                 # Plot kl (co)
                 co_mean, co_std = torch.split(save_var[area_name].co_params, [hps.co_dim, hps.co_dim], dim=2)
                 co_kl = area.co_prior.kl_divergence_by_component(co_mean[included_batches], co_std[included_batches])
-                for ico in range(co_dim):
-                    ax_col[count].plot(co_kl[:, ico])
+                for jco in range(co_dim):
+                    ax_col[count].plot(co_kl[:, jco])
                 ax_col[count].set_ylabel(f"{area_name}, kl (u)")
                 count += 1
                 
@@ -365,8 +373,8 @@ class CommunicationPSTHPlot:
                 # Plot kl (com)
                 com_mean, com_std = torch.split(save_var[area_name].com_params, [hps.com_dim, hps.com_dim], dim=2)
                 com_kl = area.com_prior.kl_divergence_by_component(com_mean[included_batches], com_std[included_batches])
-                for icom in range(com_dim):
-                    ax_col[count].plot(com_kl[:, icom])
+                for jcom in range(com_dim):
+                    ax_col[count].plot(com_kl[:, jcom])
                 ax_col[count].set_ylabel(f"{area_name}, kl (m)")
                 count += 1
 
