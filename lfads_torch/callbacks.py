@@ -1,5 +1,6 @@
 import io
 import os
+import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
 import pytorch_lightning as pl
@@ -95,7 +96,7 @@ class Log:
             if tag in event_acc.Tags()["scalars"]:
                 scalar_events = event_acc.Scalars(tag)
                 values = [event.value for event in scalar_events]
-                self.metrics[tag] = values[1::2]
+                self.metrics[tag] = values
             else:
                 self.metrics[tag] = []
         return {"log_metrics": self.metrics}
@@ -146,6 +147,7 @@ class InferredRatesPlot:
             for jn in units[area_name]:
                 
                 for ib in range(self.n_batches):
+                    axes[count][ib].plot(recon_data[ib, :, jn], "gray", alpha=0.5)
                     axes[count][ib].plot(infer_data[ib, :, jn], "b")
                     axes[count][ib].plot(self.smoothing_func(recon_data[ib, :, jn]), "k--")
                     
@@ -234,7 +236,6 @@ class ProctorSummaryPlot:
         # Access hyperparameters
         hps = pl_module.hparams
         epochs = np.arange(0, trainer.max_epochs)
-        import pdb; pdb.set_trace()
         log_metrics = kwargs["log_metrics"]
         batch, save_var = kwargs["batch"], kwargs["save_var"]
         seq_len = hps.recon_seq_len - hps.ic_enc_seq_len
@@ -254,6 +255,7 @@ class ProctorSummaryPlot:
         axes[0][0].plot(log_metrics["lr-AdamW"], "k")
         axes[0][0].set_title("Learning Rate History")
         axes[0][0].set_ylabel("learning rate")
+        axes[0][0].set_xlabel("steps")
         
         # Plot KL divergence ramp history
         axes[0][1].plot(log_metrics["valid/kl/ramp/u"], "k", label="u")
@@ -326,6 +328,7 @@ class CommunicationPSTHPlot:
         batch, save_var = kwargs["batch"], kwargs["save_var"]
         categories, cond_indices = pl_module.conditions
         log_metrics = kwargs["log_metrics"]
+        cmap = sns.color_palette("viridis", as_cmap=True)
             
         # Create subplots
         n_rows, n_cols = len(pl_module.area_names) * 4, len(categories)
@@ -333,7 +336,7 @@ class CommunicationPSTHPlot:
             n_rows,
             n_cols,
             sharex=True,
-            sharey="row",
+            sharey=False,
             figsize=(3 * n_cols, 2 * n_rows),
         )
         common_col_title(fig, categories, (n_rows, n_cols))
@@ -348,7 +351,10 @@ class CommunicationPSTHPlot:
                 hps = area.hparams
                 inputs = save_var[area_name].inputs.detach().cpu()
                 ci_enc_dim, com_dim, co_dim = hps.ci_enc_dim, hps.com_dim, hps.co_dim
-                _, com, co = torch.split(inputs, [ci_enc_dim, com_dim, co_dim], dim=2)
+                _, com, co = torch.split(inputs, [ci_enc_dim, com_dim * hps.num_other_areas, co_dim], dim=2)
+                
+                # Get colors
+                colors = [cmap(x) for x in np.linspace(0, 1, com_dim * hps.num_other_areas)]
 
                 # Plot co
                 for ico in range(co_dim):
@@ -365,16 +371,16 @@ class CommunicationPSTHPlot:
                 count += 1
                 
                 # Plot com
-                for icom in range(com_dim):
-                    ax_col[count].plot(com[included_batches, :, icom].mean(axis=0))
+                for icom in range(com_dim * hps.num_other_areas):
+                    ax_col[count].plot(com[included_batches, :, icom].mean(axis=0), color=colors[icom])
                 ax_col[count].set_ylabel(f"{area_name}, m")
                 count += 1
                 
                 # Plot kl (com)
-                com_mean, com_std = torch.split(save_var[area_name].com_params, [hps.com_dim, hps.com_dim], dim=2)
+                com_mean, com_std = torch.split(save_var[area_name].com_params, [hps.com_dim * hps.num_other_areas, hps.com_dim * hps.num_other_areas], dim=2)
                 com_kl = area.com_prior.kl_divergence_by_component(com_mean[included_batches], com_std[included_batches])
-                for jcom in range(com_dim):
-                    ax_col[count].plot(com_kl[:, jcom])
+                for jcom in range(com_dim * hps.num_other_areas):
+                    ax_col[count].plot(com_kl[:, jcom], color=colors[jcom])
                 ax_col[count].set_ylabel(f"{area_name}, kl (m)")
                 count += 1
 

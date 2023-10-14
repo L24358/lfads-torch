@@ -162,9 +162,10 @@ class SRDecoder(nn.Module):
     def __init__(self, hparams):
         super().__init__()
         self.hparams = hps = hparams
+        self.num_other_areas = len(hps.area_names) - 1
         # Create the generator
         self.gen_cell = ClippedGRUCell(
-            hps.co_dim + hps.com_dim, hps.gen_dim, clip_value=hps.cell_clip
+            hps.co_dim + hps.com_dim * self.num_other_areas, hps.gen_dim, clip_value=hps.cell_clip
         )
         # Create the mapping from generator states to factors
         self.fac_linear = KernelNormalizedLinear(hps.gen_dim, hps.fac_dim, bias=False)
@@ -195,7 +196,7 @@ class SRDecoder(nn.Module):
             hps.co_dim,
             hps.co_dim + hps.ext_input_dim,
             hps.fac_dim,
-            hps.com_dim, 
+            hps.com_dim * self.num_other_areas, 
         ]
         # Keep track of the input dimensions
         self.input_dims = [2 * hps.ci_enc_dim, hps.ext_input_dim]
@@ -204,7 +205,7 @@ class SRDecoder(nn.Module):
         hps = self.hparams
         
         con_state, gen_state, factor = torch.split(h_0.float(), [hps.con_dim, hps.gen_dim, hps.fac_dim], dim=1)
-        ci_step, com_step, _ = torch.split(input.float(), [hps.ci_enc_dim, hps.com_dim, hps.co_dim], dim=1)
+        ci_step, com_step, _ = torch.split(input.float(), [hps.ci_enc_dim, hps.com_dim * self.num_other_areas, hps.co_dim], dim=1)
 
         if self.use_con:
             # Compute controller inputs with dropout

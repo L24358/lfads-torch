@@ -9,7 +9,7 @@ from .metrics import ExpSmoothedMetric, r2_score, regional_bits_per_spike
 from .modules import augmentations
 from .modules.decoder import Decoder, SRDecoder
 from .modules.encoder import Encoder, SREncoder
-from .modules.communicator import Communicator
+from .modules.communicator import Communicator, AreaCommunicator
 from .modules.icsampler import ICSampler
 from .modules.l2 import compute_l2_penalty, sr_compute_l2_penalty
 from .modules.priors import Null
@@ -24,7 +24,7 @@ class MRLFADS(pl.LightningModule):
     def __init__(
         self,
         areas_info: dict,
-        total_fac_dim: int,
+        num_other_areas: int,
         encod_seq_len: int,
         recon_seq_len: int,
         ic_enc_seq_len: int,
@@ -82,7 +82,7 @@ class MRLFADS(pl.LightningModule):
         self._build_save_var(batch_size)
         
         # Run encode
-        factor_cat = torch.zeros(batch_size, self.hparams.total_fac_dim).to(self.device)
+        factor_state_dict = {}
         for ia, (area_name, area) in enumerate(self.areas.items()):
 
             # readin --> encoder --> icsampler (controller, generator and factors)
@@ -96,19 +96,18 @@ class MRLFADS(pl.LightningModule):
             self.save_var[area_name].states[:,0,:] = state # this causes state to have +1 length
             self.save_var[area_name].inputs[..., :area.hparams.ci_enc_dim] = ci
             self.save_var[area_name].ic_params = torch.cat([ic_mean, ic_std], dim=1)
-            self.insert_factor(factor_cat, factor_init, ia)
+            factor_state_dict[area_name] = factor_init
             
         # Run decode
         for t in range(self.hparams.recon_seq_len - self.hparams.ic_enc_seq_len):
             
-            # Initialize new factor_cat tensor to store factors from each area
-            factor_cat_new = torch.zeros(batch_size, self.hparams.total_fac_dim).to(self.device)
+            # Initialize new factor_cat tensor dict to store factors from each area
+            factor_state_dict_new = {}
             
             for ia, (area_name, area) in enumerate(self.areas.items()):
                 
                 # communicator
-                factor_compliment = self.exclude_factor(factor_cat, ia)
-                com_samp, com_params = area.communicator(factor_compliment, sample_posteriors=sample_posteriors)
+                com_samp, com_params = area.communicator(factor_state_dict, sample_posteriors=sample_posteriors)
                 self.save_var[area_name].inputs[:, t, area.hparams.ci_enc_dim:-area.hparams.co_dim] = com_samp
                 self.save_var[area_name].com_params[:,t,:] = com_params
                 
@@ -122,19 +121,20 @@ class MRLFADS(pl.LightningModule):
                 
                 # readout
                 factor_state = new_state[..., -area.hparams.fac_dim:]
-                self.insert_factor(factor_cat_new, factor_state, ia)
+                factor_state_dict_new[area_name] = factor_state
                 factor_state_split = torch.split(factor_state, batch_sizes)
                 rates = torch.cat([area.readout[s](factor_state_split[s]) for s in sessions], dim=0)
                 self.save_var[area_name].outputs[:,t,:] = rates
                 
             # Reset
-            factor_cat = factor_cat_new
+            factor_cat_dict = factor_state_dict_new
                 
         return self.save_var
                 
     def _shared_step(self, batch, batch_idx, split):
         hps = self.hparams
         self.current_split = split
+        num_areas = len(self.areas)
         
         # Process Augmentations
         sessions = sorted(batch.keys())
@@ -198,7 +198,7 @@ class MRLFADS(pl.LightningModule):
             # Compute KL loss
             ic_mean, ic_std = torch.split(self.save_var[area_name].ic_params, area.hparams.ic_dim, dim=1)
             co_mean, co_std = torch.split(self.save_var[area_name].co_params, area.hparams.co_dim, dim=2)
-            com_mean, com_std = torch.split(self.save_var[area_name].com_params, area.hparams.com_dim, dim=2)
+            com_mean, com_std = torch.split(self.save_var[area_name].com_params, area.hparams.com_dim * (num_areas-1), dim=2)
             ic_kl = area.ic_prior(ic_mean, ic_std) * hps.kl_ic_scale
             co_kl = area.co_prior(co_mean, co_std) * hps.kl_co_scale
             com_kl = area.com_prior(com_mean, com_std) * hps.kl_com_scale
@@ -233,12 +233,12 @@ class MRLFADS(pl.LightningModule):
             
         # Log scalar metrics
         metrics = {
-            f"{split}/loss": mr_loss,
-            f"{split}/recon": mr_recon,
-            f"{split}/l2": mr_l2,
-            f"{split}/kl/u": mr_kl_u,
-            f"{split}/kl/m": mr_kl_m,
-            f"{split}/r2": mr_r2,
+            f"{split}/loss": mr_loss / num_areas,
+            f"{split}/recon": mr_recon / num_areas,
+            f"{split}/l2": mr_l2 / num_areas,
+            f"{split}/kl/u": mr_kl_u / num_areas,
+            f"{split}/kl/m": mr_kl_m / num_areas,
+            f"{split}/r2": mr_r2 / num_areas,
             
             f"{split}/l2/ramp": l2_ramp,
             f"{split}/kl/ramp/u": kl_ramp_u,
@@ -271,16 +271,18 @@ class MRLFADS(pl.LightningModule):
         return self._shared_step(batch, batch_idx, "valid")
         
     def predict_step(self, batch, batch_ix, sample_posteriors=False):
-        sessions = sorted(batch.keys())
-        batch = {s: self.hparams.infer_aug_stack.process_batch(batch[s]) for s in sessions}
-        # Reset to clear any saved masks
-        self.hparams.infer_aug_stack.reset()
-        # Perform the forward pass
-        return self.forward(
-            batch=batch,
-            sample_posteriors=self.hparams.variational and sample_posteriors,
-            output_means=True,
-        )
+        return self._shared_step(batch, batch_idx, "valid") ## TODO
+        # sessions = sorted(batch.keys())
+        # batch = {s: self.hparams.infer_aug_stack.process_batch(batch[s]) for s in sessions}
+        # self.current_batch = batch
+        # # Reset to clear any saved masks
+        # self.hparams.infer_aug_stack.reset()
+        # # Perform the forward pass
+        # return self.forward(
+        #     batch=batch,
+        #     sample_posteriors=self.hparams.variational and sample_posteriors,
+        #     output_means=True,
+        # )
         
     def on_validation_epoch_end(self):
         # Log hyperparameters that may change during PBT
@@ -333,9 +335,14 @@ class MRLFADS(pl.LightningModule):
 
     def _build_areas(self, areas_info):
         # MR hyperparameters to copy into SR hyperparameters
-        hps_to_copy = ["encod_seq_len", "recon_seq_len", "total_fac_dim", "ic_enc_seq_len", "variational",
-                      "dropout_rate", "cell_clip"]
+        hps_to_copy = ["encod_seq_len", "recon_seq_len", "ic_enc_seq_len", "variational",
+                      "dropout_rate", "cell_clip", "num_other_areas"]
         mr_hps_dict = {key: self.hparams[key] for key in hps_to_copy}
+        
+        # Get total factor dimension for communication
+        total_fac_dim_dict = {area_name: area_kwargs["fac_dim"] for area_name, area_kwargs in areas_info.items()}
+        mr_hps_dict.update({"total_fac_dim_dict": total_fac_dim_dict,
+                            "area_names": self.area_names})
         
         # Build all SR-LFADS instances
         self.areas = nn.ModuleDict()
@@ -347,17 +354,18 @@ class MRLFADS(pl.LightningModule):
         self.save_var = {}
         fac_dims = []
         target_len = self.hparams.recon_seq_len - self.hparams.ic_enc_seq_len
+        num_other_areas = len(self.area_names) - 1 # number of other areas
         for area_name in self.area_names:
             hps = self.areas[area_name].hparams
             self.save_var[area_name] = SaveVariables(
                 # states has 1 extra time in the beginning, will be removed in the end
                 states = torch.zeros(batch_size, target_len+1, hps.con_dim + hps.gen_dim + hps.fac_dim).to(self.device),
-                inputs = torch.zeros(batch_size, target_len, hps.ci_enc_dim + hps.com_dim + hps.co_dim).to(self.device),
+                inputs = torch.zeros(batch_size, target_len, hps.ci_enc_dim + hps.com_dim * num_other_areas + hps.co_dim).to(self.device),
                 outputs = torch.zeros(batch_size, target_len, hps.encod_data_dim).to(self.device),
                 
                 ic_params = torch.zeros(batch_size, 2 * hps.ic_dim).to(self.device),
                 co_params = torch.zeros(batch_size, target_len, 2 * hps.co_dim).to(self.device),
-                com_params = torch.zeros(batch_size, target_len, 2 * hps.com_dim).to(self.device),   
+                com_params = torch.zeros(batch_size, target_len, 2 * hps.com_dim * num_other_areas).to(self.device),   
             )
             fac_dims.append(hps.fac_dim)
         self.insert_factor, self.exclude_factor = get_insert_func(fac_dims)
@@ -377,6 +385,7 @@ class SRLFADS(nn.Module):
         self,
         area_name,
         reconstruction: nn.ModuleList,
+        reconstruction_null: nn.ModuleList,
         co_prior: nn.Module,
         ic_prior: nn.Module,
         com_prior: nn.Module,
@@ -407,7 +416,7 @@ class SRLFADS(nn.Module):
         self.encoder = SREncoder(self.hparams)
         self.decoder = SRDecoder(self.hparams)
         self.icsampler = ICSampler(self.hparams, ic_prior)
-        self.communicator = Communicator(self.hparams, com_prior)
+        self.communicator = AreaCommunicator(self.hparams, com_prior, area_name)
         self.readout = readout
         self.recon = reconstruction
         self.ic_prior = ic_prior

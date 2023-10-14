@@ -26,11 +26,11 @@ class Communicator(nn.Module):
 class AreaCommunicator(nn.Module):
     def __init__(self, hparams, com_prior, self_name):
         super().__init__()
+        self.name = self_name
         self.hparams = hparams
         self.other_area_names = deepcopy(hparams.area_names)
-        self.other_area_names.pop(self_name)
-        self.com_dim_total = hps.com_dim * len(self.other_area_names)
-        
+        self.other_area_names.remove(self.name)
+        self.com_dim_total = hparams.com_dim * len(self.other_area_names)
         self._build_areas(com_prior)
         
     def forward(
@@ -38,19 +38,22 @@ class AreaCommunicator(nn.Module):
         factor_state,
         sample_posteriors: bool = True,
     ):
-        batch_size = factor_state[self_name].size(0)
+        hps = self.hparams
+        batch_size = factor_state[self.name].size(0)
         com_samp = torch.zeros(batch_size, self.com_dim_total)
         com_params = torch.zeros(batch_size, self.com_dim_total * 2)
+        
+        base = hps.com_dim * len(self.other_area_names)
         for ia, area_name in enumerate(self.other_area_names):
             m_params = self.areas_linear[area_name](factor_state[area_name])
-            m_mean, m_logvar = torch.split(m_params, self.hparams.com_dim, dim=1)
-            m_std = torch.sqrt(torch.exp(m_logvar) + self.hparams.m_post_var_min)
+            m_mean, m_logvar = torch.split(m_params, hps.com_dim, dim=1)
+            m_std = torch.sqrt(torch.exp(m_logvar) + hps.m_post_var_min)
             m_post = self.areas_prior[area_name].make_posterior(m_mean, m_std)
             m_samp = m_post.rsample() if sample_posteriors else m_mean
-            new_m_params = torch.cat([m_mean, m_std], dim=1)
             
             com_samp[:, hps.com_dim * ia: hps.com_dim * (ia+1)] = m_samp
-            com_params[:, 2 * hps.com_dim * ia: 2 * hps.com_dim * (ia+1)] = new_m_params
+            com_params[:, hps.com_dim * ia: hps.com_dim * (ia+1)] = m_mean
+            com_params[:, base + hps.com_dim * ia: base + hps.com_dim * (ia+1)] = m_std
         return com_samp, com_params
     
     def _build_areas(self,

@@ -6,7 +6,7 @@ from pathlib import Path
 from lfads_torch.run_model import run_model
 
 # ---------- OPTIONS -----------
-PROJECT_STR = "mrsingle_" + datetime.now().strftime("%y%m%d%h%m")
+PROJECT_STR = "mrsingle_" + datetime.now().strftime("%y%m%d%H%M")
 RUN_DIR = Path("/root/capsule/results") / PROJECT_STR
 OVERWRITE = True
 # ------------------------------

@@ -1,7 +1,7 @@
 _target_: lfads_torch.model.MRLFADS
 
 # --------- sequence length --------- #
-total_fac_dim: 82
+num_other_areas: 3
 encod_seq_len: 500
 recon_seq_len: 500
 ic_enc_seq_len: 50
@@ -81,6 +81,8 @@ areas_info:
         # --------- priors / posteriors --------- #
         reconstruction:
           - _target_: lfads_torch.modules.recons.Poisson
+        reconstruction_null:
+          - _target_: lfads_torch.modules.recons.PoissonBPS
         co_prior:
           _target_: lfads_torch.modules.priors.MultivariateNormal
           mean: 0
@@ -95,7 +97,7 @@ areas_info:
           _target_: lfads_torch.modules.priors.MultivariateNormal
           mean: 0
           variance: 0.1
-          shape: ${model.areas_info.SMA5.com_dim}
+          shape: ${eval:${model.areas_info.SMA5.com_dim} * ${model.num_other_areas}}
         ic_post_var_min: 1.0e-4
         co_post_var_min: 1.0e-4
         m_post_var_min: 1.0e-4
@@ -127,6 +129,8 @@ areas_info:
         # --------- priors / posteriors --------- #
         reconstruction:
           - _target_: lfads_torch.modules.recons.Poisson
+        reconstruction_null:
+          - _target_: lfads_torch.modules.recons.PoissonBPS
         co_prior:
           _target_: lfads_torch.modules.priors.MultivariateNormal
           mean: 0
@@ -141,7 +145,7 @@ areas_info:
           _target_: lfads_torch.modules.priors.MultivariateNormal
           mean: 0
           variance: 0.1
-          shape: ${model.areas_info.SMA2,3.com_dim}
+          shape: ${eval:${model.areas_info.SMA2,3.com_dim} * ${model.num_other_areas}}
         ic_post_var_min: 1.0e-4
         co_post_var_min: 1.0e-4
         m_post_var_min: 1.0e-4
@@ -173,6 +177,8 @@ areas_info:
         # --------- priors / posteriors --------- #
         reconstruction:
           - _target_: lfads_torch.modules.recons.Poisson
+        reconstruction_null:
+          - _target_: lfads_torch.modules.recons.PoissonBPS
         co_prior:
           _target_: lfads_torch.modules.priors.MultivariateNormal
           mean: 0
@@ -187,7 +193,7 @@ areas_info:
           _target_: lfads_torch.modules.priors.MultivariateNormal
           mean: 0
           variance: 0.1
-          shape: ${model.areas_info.FP5.com_dim}
+          shape: ${eval:${model.areas_info.FP5.com_dim} * ${model.num_other_areas}}
         ic_post_var_min: 1.0e-4
         co_post_var_min: 1.0e-4
         m_post_var_min: 1.0e-4
@@ -219,6 +225,8 @@ areas_info:
         # --------- priors / posteriors --------- #
         reconstruction:
           - _target_: lfads_torch.modules.recons.Poisson
+        reconstruction_null:
+          - _target_: lfads_torch.modules.recons.PoissonBPS
         co_prior:
           _target_: lfads_torch.modules.priors.MultivariateNormal
           mean: 0
@@ -233,7 +241,7 @@ areas_info:
           _target_: lfads_torch.modules.priors.MultivariateNormal
           mean: 0
           variance: 0.1
-          shape: ${model.areas_info.FP2,3.com_dim}
+          shape: ${eval:${model.areas_info.FP2,3.com_dim} * ${model.num_other_areas}}
         ic_post_var_min: 1.0e-4
         co_post_var_min: 1.0e-4
         m_post_var_min: 1.0e-4
