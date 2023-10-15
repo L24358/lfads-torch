@@ -9,11 +9,18 @@ tensors of data and inferred parameters.
 """
 
 import abc
-
+import math
 import torch
 import torch.nn.functional as F
 from torch import nn
 
+def zipoisson_nll_loss(target, inp, pi):
+    """Zero-Inflated Poisson Negative Log-likelihood Loss.
+    Assumes log_inp=True, full=True.
+    """
+    loss_0 = (target == 0) * torch.log(pi + (1-pi)*torch.exp(-torch.exp(inp)))
+    loss_c = (target > 0) * (torch.log(1-pi) - torch.exp(inp)) + target * inp
+    return - (loss_0 + loss_c)
 
 class Reconstruction(abc.ABC):
     @abc.abstractmethod
@@ -50,7 +57,18 @@ class Poisson(Reconstruction):
 
     def compute_means(self, output_params):
         return torch.exp(output_params[..., 0])
+    
+    def compute_loss_main(self, data, output_params):
+        """Performs reshape, then computes loss."""
+        return self.compute_loss(data, self.reshape_output_params(output_params))
+    
+class ZeroInflatedPoisson(Reconstruction):
+    def compute_loss(self, data, inp, zero_prob):
+        return zipoisson_nll_loss(data, inp, zero_prob)
 
+    def compute_loss_main(self, data, output_params):
+        inp, zero_prob = output_params
+        return self.compute_loss(data, inp, zero_prob)
 
 class PoissonBPS(Poisson):
     def compute_loss(self, data, output_params):

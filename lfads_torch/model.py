@@ -127,7 +127,7 @@ class MRLFADS(pl.LightningModule):
                 self.save_var[area_name].outputs[:,t,:] = rates
                 
             # Reset
-            factor_cat_dict = factor_state_dict_new
+            factor_state_dict = factor_state_dict_new
                 
         return self.save_var
                 
@@ -226,10 +226,6 @@ class MRLFADS(pl.LightningModule):
                     on_epoch=True,
                     batch_size=sum(batch_sizes),
                 )
-            
-        # Get metrics to log
-        optimizer = self.optimizers()
-        lr = optimizer.param_groups[0]['lr']
             
         # Log scalar metrics
         metrics = {
@@ -419,6 +415,7 @@ class SRLFADS(nn.Module):
         self.communicator = AreaCommunicator(self.hparams, com_prior, area_name)
         self.readout = readout
         self.recon = reconstruction
+        self.recon_null = reconstruction_null
         self.ic_prior = ic_prior
         self.co_prior = co_prior
         self.com_prior = com_prior

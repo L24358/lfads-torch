@@ -156,6 +156,7 @@ class InferredRatesPlot:
 
         plt.tight_layout()
         plt.savefig(f"{SAVE_DIR}/inferred_rates_plot_epoch{trainer.current_epoch}.png")
+        plt.close("all")
         return {}
 
 class PSTHPlot:
@@ -218,6 +219,7 @@ class PSTHPlot:
 
         plt.tight_layout()
         plt.savefig(f"{SAVE_DIR}/psth_plot_epoch{trainer.current_epoch}.png")
+        plt.close("all")
         return {}
 
 class ProctorSummaryPlot:
@@ -306,6 +308,7 @@ class ProctorSummaryPlot:
         
         plt.tight_layout()
         plt.savefig(f"{SAVE_DIR}/proctor_summary_plot_epoch{trainer.current_epoch}.png")
+        plt.close("all")
         return {}
 
 class CommunicationPSTHPlot:
@@ -386,6 +389,7 @@ class CommunicationPSTHPlot:
 
         plt.tight_layout()
         plt.savefig(f"{SAVE_DIR}/communication_plot_epoch{trainer.current_epoch}.png")
+        plt.close("all")
         return {}
         
 class ICPCAPlot:
@@ -429,6 +433,7 @@ class ICPCAPlot:
             
         plt.tight_layout()
         plt.savefig(f"{SAVE_DIR}/icpca_plot_epoch{trainer.current_epoch}.png")
+        plt.close("all")
         return {}
         
 # ===== Functions that are on_init_end ===== #

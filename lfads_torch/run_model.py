@@ -92,3 +92,5 @@ def run_model(
         if torch.cuda.is_available():
             model = model.to("cuda")
         call(config.posterior_sampling.fn, model=model, datamodule=datamodule)
+    
+    return model, datamodule

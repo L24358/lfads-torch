@@ -31,7 +31,8 @@ class AreaCommunicator(nn.Module):
         self.other_area_names = deepcopy(hparams.area_names)
         self.other_area_names.remove(self.name)
         self.com_dim_total = hparams.com_dim * len(self.other_area_names)
-        self._build_areas(com_prior)
+        self.com_prior = com_prior
+        self._build_areas()
         
     def forward(
         self,
@@ -40,27 +41,24 @@ class AreaCommunicator(nn.Module):
     ):
         hps = self.hparams
         batch_size = factor_state[self.name].size(0)
-        com_samp = torch.zeros(batch_size, self.com_dim_total)
-        com_params = torch.zeros(batch_size, self.com_dim_total * 2)
+        m_means = torch.zeros(batch_size, self.com_dim_total)
+        m_stds = torch.zeros(batch_size, self.com_dim_total)
         
         base = hps.com_dim * len(self.other_area_names)
         for ia, area_name in enumerate(self.other_area_names):
             m_params = self.areas_linear[area_name](factor_state[area_name])
             m_mean, m_logvar = torch.split(m_params, hps.com_dim, dim=1)
             m_std = torch.sqrt(torch.exp(m_logvar) + hps.m_post_var_min)
-            m_post = self.areas_prior[area_name].make_posterior(m_mean, m_std)
-            m_samp = m_post.rsample() if sample_posteriors else m_mean
+            m_means[:, hps.com_dim * ia: hps.com_dim * (ia+1)] = m_mean
+            m_stds[:, hps.com_dim * ia: hps.com_dim * (ia+1)] = m_std
             
-            com_samp[:, hps.com_dim * ia: hps.com_dim * (ia+1)] = m_samp
-            com_params[:, hps.com_dim * ia: hps.com_dim * (ia+1)] = m_mean
-            com_params[:, base + hps.com_dim * ia: base + hps.com_dim * (ia+1)] = m_std
+        com_post = self.com_prior.make_posterior(m_means, m_stds)
+        com_samp = com_post.rsample() if sample_posteriors else m_means
+        com_params = torch.cat([m_means, m_stds], dim=1)
         return com_samp, com_params
     
-    def _build_areas(self,
-                     com_prior):
+    def _build_areas(self):
         hps = self.hparams
         self.areas_linear = nn.ModuleDict()
-        self.areas_prior = nn.ModuleDict()
         for ia, area_name in enumerate(self.other_area_names):
             self.areas_linear[area_name] = nn.Linear(hps.total_fac_dim_dict[area_name], 2 * hps.com_dim)
-            self.areas_prior[area_name] = deepcopy(com_prior)
