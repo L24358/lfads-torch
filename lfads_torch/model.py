@@ -164,9 +164,9 @@ class MRLFADS(pl.LightningModule):
             
             # Compute + process reconstruction loss
             rates_split = torch.split(self.save_var[area_name].outputs, batch_sizes)
-            recon_all = [area.recon[s].compute_loss(
+            recon_all = [area.recon[s].compute_loss_main(
                 batch[s].recon_data[area_name][:,recon_start:],
-                area.recon[s].reshape_output_params(rates_split[s]))
+                rates_split[s])
             for s in sessions]
             recon_all = [aug_stack.process_losses(
                 recon_all[s],
@@ -186,8 +186,8 @@ class MRLFADS(pl.LightningModule):
                 area_recon = batch[s].recon_data[area_name][:,recon_start:]
                 area_infer = self.save_var[area_name].outputs
                 area_base = torch.mean(area_recon.float(), dim=1, keepdim=True).repeat(1, hps.recon_seq_len - hps.ic_enc_seq_len, 1) + 1e-16
-                loss_model = area.recon[s].compute_loss(area_recon, area.recon[s].reshape_output_params(area_infer))
-                loss_null = area.recon[s].compute_loss(area_recon, area.recon[s].reshape_output_params(area_base))
+                loss_model = area.recon[s].compute_loss_main(area_recon, area_infer)
+                loss_null = area.recon[s].compute_loss_main(area_recon, area_base)
                 r2.append( (1 - loss_model / loss_null).mean().item() )
             r2 = np.mean(r2)
             

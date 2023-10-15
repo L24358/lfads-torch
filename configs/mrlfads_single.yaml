@@ -1,5 +1,5 @@
 defaults:
-  - model: mrlfads_SMA_FP
+  - model: mrlfads_SMA_FP_zipoisson
   - datamodule: mrlfads_SMA_FP
   - callbacks: mrlfads
   - _self_

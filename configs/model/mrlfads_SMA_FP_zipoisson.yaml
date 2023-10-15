@@ -1,0 +1,252 @@
+_target_: lfads_torch.model.MRLFADS
+
+# --------- sequence length --------- #
+num_other_areas: 3
+encod_seq_len: 500
+recon_seq_len: 500
+ic_enc_seq_len: 50
+
+# --------- augmentation --------- #
+train_aug_stack:
+  _target_: lfads_torch.modules.augmentations.AugmentationStack
+  transforms:
+    - _target_: lfads_torch.modules.augmentations.AreaCoordinatedDropout
+      cd_rate: 0.0
+      cd_pass_rate: 0.0
+      ic_enc_seq_len: ${model.ic_enc_seq_len}
+  batch_order: [0]
+  loss_order: [0]
+infer_aug_stack:
+  _target_: lfads_torch.modules.augmentations.AugmentationStack
+
+# --------- learning rate --------- #
+lr_init: 4.0e-3
+lr_stop: 1.0e-5
+lr_decay: 0.95
+lr_patience: 6
+lr_adam_beta1: 0.9
+lr_adam_beta2: 0.999
+lr_adam_epsilon: 1.0e-8
+lr_scheduler: True
+
+# --------- regularization --------- #
+weight_decay: 0.0
+l2_start_epoch: 0
+l2_increase_epoch: 80
+l2_ic_enc_scale: 1.0e-2
+l2_ci_enc_scale: 1.0e-2
+l2_gen_scale: 1.0e-2
+l2_con_scale: 1.0e-2
+kl_start_epoch_u: 0
+kl_increase_epoch_u: 80
+kl_start_epoch_m: 40
+kl_increase_epoch_m: 120
+kl_ic_scale: 5.0e-2
+kl_co_scale: 5.0e-2
+kl_com_scale: 5.0e-2
+
+# --------- misc --------- #
+variational: True
+loss_scale: 1.0e+4
+recon_reduce_mean: True
+dropout_rate: 0.3
+cell_clip: 5.0
+
+# --------- area specification --------- #
+areas_info:
+    SMA5:
+        # --------- architecture --------- #
+        encod_data_dim: 34
+        ext_input_dim: 0
+        ic_enc_dim: 64
+        ci_enc_dim: 64
+        ci_lag: 1
+        con_dim: 64
+        co_dim: 4
+        ic_dim: 64
+        gen_dim: 200
+        fac_dim: ${model.areas_info.SMA5.encod_data_dim}
+        com_dim: 4
+
+        # --------- readin / readout --------- #
+        readin:
+          - _target_: torch.nn.Identity
+        readout:
+          _target_: torch.nn.ModuleList
+          modules:
+            - _target_: lfads_torch.modules.readin_readout.FanInLinear
+              in_features: ${model.areas_info.SMA5.fac_dim}
+              out_features: ${model.areas_info.SMA5.encod_data_dim}
+
+        # --------- priors / posteriors --------- #
+        reconstruction:
+          - _target_: lfads_torch.modules.recons.ZeroInflatedPoisson
+            data_dim: ${model.areas_info.SMA5.encod_data_dim}
+        reconstruction_null:
+          - _target_: lfads_torch.modules.recons.PoissonBPS
+        co_prior:
+          _target_: lfads_torch.modules.priors.MultivariateNormal
+          mean: 0
+          variance: 0.1
+          shape: ${model.areas_info.SMA5.co_dim}
+        ic_prior:
+          _target_: lfads_torch.modules.priors.MultivariateNormal
+          mean: 0
+          variance: 0.1
+          shape: ${model.areas_info.SMA5.ic_dim}
+        com_prior:
+          _target_: lfads_torch.modules.priors.MultivariateNormal
+          mean: 0
+          variance: 0.1
+          shape: ${eval:${model.areas_info.SMA5.com_dim} * ${model.num_other_areas}}
+        ic_post_var_min: 1.0e-4
+        co_post_var_min: 1.0e-4
+        m_post_var_min: 1.0e-4
+        
+    SMA2,3:
+        # --------- architecture --------- #
+        encod_data_dim: 9
+        ext_input_dim: 0
+        ic_enc_dim: 32
+        ci_enc_dim: 32
+        ci_lag: 1
+        con_dim: 32
+        co_dim: 4
+        ic_dim: 32
+        gen_dim: 100
+        fac_dim: ${model.areas_info.SMA2,3.encod_data_dim}
+        com_dim: 4
+
+        # --------- readin / readout --------- #
+        readin:
+          - _target_: torch.nn.Identity
+        readout:
+          _target_: torch.nn.ModuleList
+          modules:
+            - _target_: lfads_torch.modules.readin_readout.FanInLinear
+              in_features: ${model.areas_info.SMA2,3.fac_dim}
+              out_features: ${model.areas_info.SMA2,3.encod_data_dim}
+
+        # --------- priors / posteriors --------- #
+        reconstruction:
+          - _target_: lfads_torch.modules.recons.ZeroInflatedPoisson
+            data_dim: ${model.areas_info.SMA2,3.encod_data_dim}
+        reconstruction_null:
+          - _target_: lfads_torch.modules.recons.PoissonBPS
+        co_prior:
+          _target_: lfads_torch.modules.priors.MultivariateNormal
+          mean: 0
+          variance: 0.1
+          shape: ${model.areas_info.SMA2,3.co_dim}
+        ic_prior:
+          _target_: lfads_torch.modules.priors.MultivariateNormal
+          mean: 0
+          variance: 0.1
+          shape: ${model.areas_info.SMA2,3.ic_dim}
+        com_prior:
+          _target_: lfads_torch.modules.priors.MultivariateNormal
+          mean: 0
+          variance: 0.1
+          shape: ${eval:${model.areas_info.SMA2,3.com_dim} * ${model.num_other_areas}}
+        ic_post_var_min: 1.0e-4
+        co_post_var_min: 1.0e-4
+        m_post_var_min: 1.0e-4
+        
+    FP5:
+        # --------- architecture --------- #
+        encod_data_dim: 38
+        ext_input_dim: 0
+        ic_enc_dim: 64
+        ci_enc_dim: 64
+        ci_lag: 1
+        con_dim: 64
+        co_dim: 4
+        ic_dim: 64
+        gen_dim: 200
+        fac_dim: ${model.areas_info.FP5.encod_data_dim}
+        com_dim: 4
+
+        # --------- readin / readout --------- #
+        readin:
+          - _target_: torch.nn.Identity
+        readout:
+          _target_: torch.nn.ModuleList
+          modules:
+            - _target_: lfads_torch.modules.readin_readout.FanInLinear
+              in_features: ${model.areas_info.FP5.fac_dim}
+              out_features: ${model.areas_info.FP5.encod_data_dim}
+
+        # --------- priors / posteriors --------- #
+        reconstruction:
+          - _target_: lfads_torch.modules.recons.ZeroInflatedPoisson
+            data_dim: ${model.areas_info.FP5.encod_data_dim}
+        reconstruction_null:
+          - _target_: lfads_torch.modules.recons.PoissonBPS
+        co_prior:
+          _target_: lfads_torch.modules.priors.MultivariateNormal
+          mean: 0
+          variance: 0.1
+          shape: ${model.areas_info.FP5.co_dim}
+        ic_prior:
+          _target_: lfads_torch.modules.priors.MultivariateNormal
+          mean: 0
+          variance: 0.1
+          shape: ${model.areas_info.FP5.ic_dim}
+        com_prior:
+          _target_: lfads_torch.modules.priors.MultivariateNormal
+          mean: 0
+          variance: 0.1
+          shape: ${eval:${model.areas_info.FP5.com_dim} * ${model.num_other_areas}}
+        ic_post_var_min: 1.0e-4
+        co_post_var_min: 1.0e-4
+        m_post_var_min: 1.0e-4
+        
+    FP2,3:
+        # --------- architecture --------- #
+        encod_data_dim: 1
+        ext_input_dim: 0
+        ic_enc_dim: 16
+        ci_enc_dim: 16
+        ci_lag: 1
+        con_dim: 16
+        co_dim: 4
+        ic_dim: 16
+        gen_dim: 50
+        fac_dim: ${model.areas_info.FP2,3.encod_data_dim}
+        com_dim: 4
+
+        # --------- readin / readout --------- #
+        readin:
+          - _target_: torch.nn.Identity
+        readout:
+          _target_: torch.nn.ModuleList
+          modules:
+            - _target_: lfads_torch.modules.readin_readout.FanInLinear
+              in_features: ${model.areas_info.FP2,3.fac_dim}
+              out_features: ${model.areas_info.FP2,3.encod_data_dim}
+
+        # --------- priors / posteriors --------- #
+        reconstruction:
+          - _target_: lfads_torch.modules.recons.ZeroInflatedPoisson
+            data_dim: ${model.areas_info.FP2,3.encod_data_dim}
+        reconstruction_null:
+          - _target_: lfads_torch.modules.recons.PoissonBPS
+        co_prior:
+          _target_: lfads_torch.modules.priors.MultivariateNormal
+          mean: 0
+          variance: 0.1
+          shape: ${model.areas_info.FP2,3.co_dim}
+        ic_prior:
+          _target_: lfads_torch.modules.priors.MultivariateNormal
+          mean: 0
+          variance: 0.1
+          shape: ${model.areas_info.FP2,3.ic_dim}
+        com_prior:
+          _target_: lfads_torch.modules.priors.MultivariateNormal
+          mean: 0
+          variance: 0.1
+          shape: ${eval:${model.areas_info.FP2,3.com_dim} * ${model.num_other_areas}}
+        ic_post_var_min: 1.0e-4
+        co_post_var_min: 1.0e-4
+        m_post_var_min: 1.0e-4
+

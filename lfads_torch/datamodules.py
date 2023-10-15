@@ -336,3 +336,7 @@ class MesoMapDataModule(pl.LightningDataModule):
             for i, ds in enumerate(self.val_session_datasets)
         }
         return CombinedLoader(dataloaders, mode="max_size_cycle")
+    
+    def get_val_dataloader(self):
+        self.setup()
+        return self.val_dataloader()
