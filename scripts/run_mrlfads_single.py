@@ -22,4 +22,5 @@ os.chdir(RUN_DIR)
 run_model(
     overrides={},
     config_path="../configs/mrlfads_single.yaml",
+    do_posterior_sample=False,
 )

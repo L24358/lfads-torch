@@ -80,8 +80,10 @@ areas_info:
 
         # --------- priors / posteriors --------- #
         reconstruction:
-          - _target_: lfads_torch.modules.recons.ZeroInflatedPoisson
-            data_dim: ${model.areas_info.SMA5.encod_data_dim}
+          _target_: torch.nn.ModuleList
+          modules:
+            - _target_: lfads_torch.modules.recons.ZeroInflatedPoisson
+              data_dim: ${model.areas_info.SMA5.encod_data_dim}
         reconstruction_null:
           - _target_: lfads_torch.modules.recons.PoissonBPS
         co_prior:
@@ -129,8 +131,10 @@ areas_info:
 
         # --------- priors / posteriors --------- #
         reconstruction:
-          - _target_: lfads_torch.modules.recons.ZeroInflatedPoisson
-            data_dim: ${model.areas_info.SMA2,3.encod_data_dim}
+          _target_: torch.nn.ModuleList
+          modules:
+            - _target_: lfads_torch.modules.recons.ZeroInflatedPoisson
+              data_dim: ${model.areas_info.SMA2,3.encod_data_dim}
         reconstruction_null:
           - _target_: lfads_torch.modules.recons.PoissonBPS
         co_prior:
@@ -178,8 +182,10 @@ areas_info:
 
         # --------- priors / posteriors --------- #
         reconstruction:
-          - _target_: lfads_torch.modules.recons.ZeroInflatedPoisson
-            data_dim: ${model.areas_info.FP5.encod_data_dim}
+          _target_: torch.nn.ModuleList
+          modules:
+            - _target_: lfads_torch.modules.recons.ZeroInflatedPoisson
+              data_dim: ${model.areas_info.FP5.encod_data_dim}
         reconstruction_null:
           - _target_: lfads_torch.modules.recons.PoissonBPS
         co_prior:
@@ -227,8 +233,10 @@ areas_info:
 
         # --------- priors / posteriors --------- #
         reconstruction:
-          - _target_: lfads_torch.modules.recons.ZeroInflatedPoisson
-            data_dim: ${model.areas_info.FP2,3.encod_data_dim}
+          _target_: torch.nn.ModuleList
+          modules:
+            - _target_: lfads_torch.modules.recons.ZeroInflatedPoisson
+              data_dim: ${model.areas_info.FP2,3.encod_data_dim}
         reconstruction_null:
           - _target_: lfads_torch.modules.recons.PoissonBPS
         co_prior:

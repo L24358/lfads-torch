@@ -18,8 +18,7 @@ def zipoisson_nll_loss(target, inp, pi):
     """Zero-Inflated Poisson Negative Log-likelihood Loss.
     Assumes log_inp=True, full=True.
     """
-    if target.requires_grad: import pdb; pdb.set_trace()
-    pi_reshape = pi.reshape(1,1,-1).to(target.device)
+    pi_reshape = torch.clip(pi.reshape(1,1,-1).to(target.device), min=0., max=1.)
     loss_0 = (target == 0) * torch.log(pi_reshape + (1-pi_reshape)*torch.exp(-torch.exp(inp)))
     loss_c = (target > 0) * (torch.log(1-pi_reshape) - torch.exp(inp)) + target * inp
     return - (loss_0 + loss_c)
@@ -45,6 +44,7 @@ class Reconstruction(abc.ABC):
 class Poisson(Reconstruction):
     def __init__(self):
         self.n_params = 1
+        self.name = "poisson"
 
     def reshape_output_params(self, output_params):
         return torch.unsqueeze(output_params, dim=-1)
@@ -65,10 +65,12 @@ class Poisson(Reconstruction):
         return self.compute_loss(data, self.reshape_output_params(output_params))
     
     
-class ZeroInflatedPoisson():
+class ZeroInflatedPoisson(nn.Module):
     def __init__(self, data_dim):
+        super().__init__()
         self.n_params = 2
-        self.zero_prob = nn.Parameter(torch.ones(data_dim,) * 0.5, requires_grad=True)
+        self.name = "zipoisson"
+        self.zero_prob = nn.Parameter(torch.ones(data_dim,) * 0.5)
     
     def compute_loss(self, data, output_params):
         return zipoisson_nll_loss(data, output_params, self.zero_prob)

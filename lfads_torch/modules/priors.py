@@ -24,7 +24,7 @@ class MultivariateNormal(nn.Module):
         means = torch.ones(shape) * mean
         logvars = torch.log(torch.ones(shape) * variance)
         self.mean = nn.Parameter(means, requires_grad=False)
-        self.logvar = nn.Parameter(logvars, requires_grad=False)
+        self.logvar = nn.Parameter(logvars, requires_grad=True)
 
     def make_posterior(self, post_mean, post_std):
         return Independent(Normal(post_mean, post_std), 1)

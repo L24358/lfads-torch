@@ -195,6 +195,11 @@ class MRLFADS(pl.LightningModule):
             l2 = sr_compute_l2_penalty(area, hps)
             mr_l2 += l2
             
+            # # Compute L2-zi loss ## TODO: condition on recon type
+            # l2_zi = [torch.square(area.recon[s].zero_prob).mean() for s in sessions]
+            # l2_zi = torch.mean(torch.stack(l2_zi))
+            # mr_l2 += 0.1 * l2_zi ## TODO: make this a parameter
+            
             # Compute KL loss
             ic_mean, ic_std = torch.split(self.save_var[area_name].ic_params, area.hparams.ic_dim, dim=1)
             co_mean, co_std = torch.split(self.save_var[area_name].co_params, area.hparams.co_dim, dim=2)

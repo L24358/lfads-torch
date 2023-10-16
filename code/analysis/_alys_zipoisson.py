@@ -14,7 +14,7 @@ from scipy.ndimage import gaussian_filter1d
 from lfads_torch.run_model import run_model
 
 # ---------- OPTIONS -----------
-PROJECT_STR = "mrsingle_2310152003"
+PROJECT_STR = "mrsingle_2310161508"
 RUN_DIR = Path("/root/capsule/results") / PROJECT_STR
 OVERWRITE = False
 s = 0 ## TODO: using the first session only
