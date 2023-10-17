@@ -195,10 +195,15 @@ class MRLFADS(pl.LightningModule):
             l2 = sr_compute_l2_penalty(area, hps)
             mr_l2 += l2
             
-            # # Compute L2-zi loss ## TODO: condition on recon type
-            # l2_zi = [torch.square(area.recon[s].zero_prob).mean() for s in sessions]
-            # l2_zi = torch.mean(torch.stack(l2_zi))
-            # mr_l2 += 0.1 * l2_zi ## TODO: make this a parameter
+            # Compute L2-zi loss ## TODO: condition on recon type
+            l2_zi = [torch.square(torch.clip(area.recon[s].zero_prob,min=0.,max=1.)).mean() for s in sessions]
+            l2_zi = torch.mean(torch.stack(l2_zi))
+            mr_l2 += 0.1 * l2_zi ## TODO: make this a parameter
+            # # Only start training zero_prob after the 20th epoch
+            # if self.current_epoch < 20:
+            #     for s in sessions: area.recon[s].zero_prob.requires_grad = False
+            # else:
+            #     for s in sessions: area.recon[s].zero_prob.requires_grad = False
             
             # Compute KL loss
             ic_mean, ic_std = torch.split(self.save_var[area_name].ic_params, area.hparams.ic_dim, dim=1)

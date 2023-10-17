@@ -18,7 +18,7 @@ def zipoisson_nll_loss(target, inp, pi):
     """Zero-Inflated Poisson Negative Log-likelihood Loss.
     Assumes log_inp=True, full=True.
     """
-    pi_reshape = torch.clip(pi.reshape(1,1,-1).to(target.device), min=0., max=1.)
+    pi_reshape = torch.clip(pi.reshape(1,1,-1).to(target.device), min=0., max=0.5)
     loss_0 = (target == 0) * torch.log(pi_reshape + (1-pi_reshape)*torch.exp(-torch.exp(inp)))
     loss_c = (target > 0) * (torch.log(1-pi_reshape) - torch.exp(inp)) + target * inp
     return - (loss_0 + loss_c)
@@ -70,7 +70,7 @@ class ZeroInflatedPoisson(nn.Module):
         super().__init__()
         self.n_params = 2
         self.name = "zipoisson"
-        self.zero_prob = nn.Parameter(torch.ones(data_dim,) * 0.5)
+        self.zero_prob = nn.Parameter(torch.ones(data_dim,) * 0.1)
     
     def compute_loss(self, data, output_params):
         return zipoisson_nll_loss(data, output_params, self.zero_prob)
