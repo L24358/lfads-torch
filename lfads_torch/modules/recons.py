@@ -10,6 +10,7 @@ tensors of data and inferred parameters.
 
 import abc
 import math
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -22,6 +23,19 @@ def zipoisson_nll_loss(target, inp, pi):
     loss_0 = (target == 0) * torch.log(pi_reshape + (1-pi_reshape)*torch.exp(-torch.exp(inp)))
     loss_c = (target > 0) * (torch.log(1-pi_reshape) - torch.exp(inp)) + target * inp
     return - (loss_0 + loss_c)
+
+class ZeroInflatedPoisson(nn.Module):
+    def __init__(self, data_dim, zero_prob_init=0.0):
+        super().__init__()
+        self.n_params = 2
+        self.name = "zipoisson"
+        self.zero_prob = nn.Parameter(torch.ones(data_dim,) * zero_prob_init)
+    
+    def compute_loss(self, data, output_params):
+        return zipoisson_nll_loss(data, output_params, self.zero_prob)
+
+    def compute_loss_main(self, data, output_params):
+        return self.compute_loss(data, output_params)
 
 class Reconstruction(abc.ABC):
     @abc.abstractmethod
@@ -63,21 +77,6 @@ class Poisson(Reconstruction):
     def compute_loss_main(self, data, output_params):
         """Performs reshape, then computes loss."""
         return self.compute_loss(data, self.reshape_output_params(output_params))
-    
-    
-class ZeroInflatedPoisson(nn.Module):
-    def __init__(self, data_dim):
-        super().__init__()
-        self.n_params = 2
-        self.name = "zipoisson"
-        self.zero_prob = nn.Parameter(torch.ones(data_dim,) * 0.1)
-    
-    def compute_loss(self, data, output_params):
-        return zipoisson_nll_loss(data, output_params, self.zero_prob)
-
-    def compute_loss_main(self, data, output_params):
-        return self.compute_loss(data, output_params)
-
     
 class PoissonBPS(Poisson):
     def compute_loss(self, data, output_params):

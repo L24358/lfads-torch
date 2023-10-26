@@ -56,7 +56,12 @@ class OnEpochEndCalls(pl.Callback):
         assert len(in_train) == len(callbacks)
         
     def on_train_epoch_end(self, trainer, pl_module):
-        kwargs = {"log_metrics": self.callbacks[0].metrics} ## Log needs to be the first callback
+        # Common operations
+        s = 0 # TODO: using the first session only
+        batch = pl_module.current_batch[s]
+        save_var = pl_module.save_var
+        kwargs = {"batch": batch, "save_var": save_var, "log_metrics": self.callbacks[0].metrics} ## Log needs to be the first callback
+        
         for i, callback in enumerate(self.callbacks):
             if int(self.in_train[i]):
                 new_kwargs = callback.run(trainer, pl_module, **kwargs)
@@ -78,6 +83,47 @@ class OnEpochEndCalls(pl.Callback):
 
     
 # ===== Classes that are on_validation_epoch_end ===== #
+
+class CalcCorrCoef:
+    def __init__(self,
+                log_every_n_epochs: int = 1):
+        self.log_every_n_epochs = log_every_n_epochs
+        self.smoothing_func = lambda x: gaussian_filter1d(x.astype(float), sigma=10)
+        
+    def run(self, trainer, pl_module, **kwargs):
+        if (trainer.current_epoch % self.log_every_n_epochs) != 0:
+            return
+        
+        # Get variables
+        s = 0 ##
+        batch, save_var = kwargs["batch"], kwargs["save_var"]
+        ic_enc_seq_len = pl_module.hparams.ic_enc_seq_len
+        
+        for area_name, area in pl_module.areas.items():
+            recon_data = batch.recon_data[area_name].detach().cpu().numpy()[:, ic_enc_seq_len:]
+            recon_data = recon_data.reshape(-1, area.hparams.encod_data_dim).T # shape = (neurons, batch * time)
+            infer_data = torch.exp(save_var[area_name].outputs.detach().cpu()).numpy()
+            infer_data = infer_data.reshape(-1, area.hparams.encod_data_dim).T
+            
+            corrs = []
+            for an in area.recon[s].active_neurons:
+                smoothed_data = self.smoothing_func(recon_data[an])
+                corr = np.corrcoef(infer_data[an], smoothed_data)[0][1]
+                corrs.append(corr)
+            area.recon[s].log_corrcoef(torch.Tensor(corrs))
+            
+class FreezeZIPoisson:
+    def __init__(self,
+                log_every_n_epochs: int = 10):
+        self.log_every_n_epochs = log_every_n_epochs
+        
+    def run(self, trainer, pl_module, **kwargs):
+        if (trainer.current_epoch % self.log_every_n_epochs) != 0:
+            return
+        
+        s = 0 ##
+        for area_name, area in pl_module.areas.items():
+            area.recon[s].mask_neurons()
 
 class Log:
     def __init__(self,
@@ -139,16 +185,18 @@ class InferredRatesPlot:
         common_col_title(fig, [f"Batch {i}" for i in range(n_cols)], (n_rows, n_cols))
         
         # Iterate through areas and take n_sample neurons
+        s = 0 ## TODO, New
         count = 0
-        for area_name in pl_module.area_names:
+        for area_name, area in pl_module.areas.items():
             recon_data = batch.recon_data[area_name].detach().cpu().numpy()[:, ic_enc_seq_len:]
             infer_data = torch.exp(save_var[area_name].outputs.detach().cpu()).numpy()
+            non_zero_prob = 1 - area.recon[s].zero_prob.detach().cpu().numpy() ## New
 
             for jn in units[area_name]:
                 
                 for ib in range(self.n_batches):
                     axes[count][ib].plot(recon_data[ib, :, jn], "gray", alpha=0.5)
-                    axes[count][ib].plot(infer_data[ib, :, jn], "b")
+                    axes[count][ib].plot(infer_data[ib, :, jn] * non_zero_prob[jn], "b") ## New
                     axes[count][ib].plot(self.smoothing_func(recon_data[ib, :, jn]), "k--")
                     
                 axes[count][0].set_ylabel(f"area {area_name}, neuron #{jn}")
@@ -190,23 +238,27 @@ class PSTHPlot:
         )
 
         # For each condition (category):
+        s = 0 ## TODO, New
         for ic, ax_col in enumerate(axes.T):
             count = 0
             included_batches = cond_indices[ic]
 
             # Iterate through areas and take n_sample neurons
-            for area_name in pl_module.area_names:
+            for area_name, area in pl_module.areas.items():
                 recon_data = batch.recon_data[area_name].detach().cpu().numpy()[:, ic_enc_seq_len:]
                 infer_data = torch.exp(save_var[area_name].outputs.detach().cpu()).numpy() # TODO: exp
+                non_zero_prob = 1 - area.recon[s].zero_prob.detach().cpu().numpy() ## New
 
                 for jn in units[area_name]:
-                    ax_col[count].plot(infer_data[included_batches, :, jn].mean(axis=0), "b")
-                    ax_col[count].plot(self.smoothing_func(recon_data[included_batches, :, jn].mean(axis=0)), "k")
-                    
                     x_mean = self.smoothing_func(recon_data[included_batches, :, jn].mean(axis=0)) # shape = (T,)
                     r_mean = infer_data[included_batches, :, jn].mean(axis=0) # shape = (T,)
                     x_std = self.smoothing_func(recon_data[included_batches, :, jn].std(axis=0)) # shape = (T,)
                     r_std = infer_data[included_batches, :, jn].std(axis=0) # shape = (T,)
+                    
+                    r_mean *= non_zero_prob[jn] ## New
+                    r_std *= abs(non_zero_prob[jn]) ## New
+                    ax_col[count].plot(r_mean, "b")
+                    ax_col[count].plot(x_mean, "k")
                     ax_col[count].plot(range(len(r_mean)), r_mean, "b")
                     ax_col[count].plot(range(len(x_mean)), x_mean, "k--")
                     ax_col[count].fill_between(range(len(r_mean)), r_mean - r_std, r_mean + r_std,

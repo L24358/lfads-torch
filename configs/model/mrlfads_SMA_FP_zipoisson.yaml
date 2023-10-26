@@ -39,7 +39,7 @@ l2_gen_scale: 1.0e-2
 l2_con_scale: 1.0e-2
 kl_start_epoch_u: 0
 kl_increase_epoch_u: 80
-kl_start_epoch_m: 40
+kl_start_epoch_m: 100
 kl_increase_epoch_m: 120
 kl_ic_scale: 5.0e-2
 kl_co_scale: 5.0e-2

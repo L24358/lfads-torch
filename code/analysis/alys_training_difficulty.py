@@ -4,6 +4,7 @@ Analyze how training difficulty might relate to neuron firing statistics.
 
 import os
 import numpy as np
+import seaborn as sns
 import matplotlib.pyplot as plt
 import shutil
 from datetime import datetime
@@ -48,7 +49,9 @@ def batch_corrcoef(x, y):
 
 corrs_area = []
 rates_area = []
-for area_name in model.areas:
+area_names = []
+palette = sns.color_palette("Set2", n_colors=len(model.areas))
+for ia, area_name in enumerate(model.areas):
     true_data = model.current_batch[s].recon_data[area_name][:, ic_enc_seq_len:].cpu().detach().numpy()
     pred_rates = model.save_var[area_name].outputs.cpu().detach().numpy()
     avg_rates = true_data.mean(axis=(0,1))
@@ -57,9 +60,10 @@ for area_name in model.areas:
     
     rates_area += list(avg_rates)
     corrs_area += corrs
+    area_names += [area_name] * len(corrs)
 
 corr = np.corrcoef(rates_area, corrs_area)[0][1]
-plt.scatter(rates_area, corrs_area, c="k")
+sns.scatterplot(x=rates_area, y=corrs_area, hue=area_names, palette=palette, s=50)
 plt.xlabel("average neuron rates")
 plt.ylabel("corr(pred, smooth)")
 plt.title(f"Correlation: {round(corr, 2)}")
