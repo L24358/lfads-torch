@@ -190,7 +190,9 @@ class InferredRatesPlot:
         for area_name, area in pl_module.areas.items():
             recon_data = batch.recon_data[area_name].detach().cpu().numpy()[:, ic_enc_seq_len:]
             infer_data = torch.exp(save_var[area_name].outputs.detach().cpu()).numpy()
-            non_zero_prob = 1 - area.recon[s].zero_prob.detach().cpu().numpy() ## New
+            
+            # non_zero_prob = 1 - area.recon[s].zero_prob.detach().cpu().numpy() ## New
+            non_zero_prob = np.ones(infer_data.shape[-1]) ## For Poisson
 
             for jn in units[area_name]:
                 
@@ -247,7 +249,8 @@ class PSTHPlot:
             for area_name, area in pl_module.areas.items():
                 recon_data = batch.recon_data[area_name].detach().cpu().numpy()[:, ic_enc_seq_len:]
                 infer_data = torch.exp(save_var[area_name].outputs.detach().cpu()).numpy() # TODO: exp
-                non_zero_prob = 1 - area.recon[s].zero_prob.detach().cpu().numpy() ## New
+                # non_zero_prob = 1 - area.recon[s].zero_prob.detach().cpu().numpy() ## New
+                non_zero_prob = np.ones(infer_data.shape[-1]) ## For Poisson
 
                 for jn in units[area_name]:
                     x_mean = self.smoothing_func(recon_data[included_batches, :, jn].mean(axis=0)) # shape = (T,)
