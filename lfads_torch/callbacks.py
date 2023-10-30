@@ -31,13 +31,17 @@ class OnInitEndCalls(pl.Callback):
     
         # Common operations
         dataloader = trainer.datamodule.val_dataloader()
-        s = 0 # TODO: only using the first session
-        batch, info_strings = next(iter(dataloader))[s]
+        batches, info_strings = [], []
+        data = next(iter(dataloader))
+        for s in data.keys():
+            batch, info_string = data[s]
+            batches.append(batch)
+            info_strings.append(info_string)
         
         # Run functions here
         os.makedirs(SAVE_DIR, exist_ok=True)
-        get_maximum_activity_units(trainer, pl_module, batch) 
-        get_conditions(trainer, pl_module, batch, info_strings)
+        get_maximum_activity_units(trainer, pl_module, batches) 
+        get_conditions(trainer, pl_module, info_strings)
         proctor_preview_plot(trainer, pl_module)
         
         self.ran = True # run only once
@@ -57,8 +61,7 @@ class OnEpochEndCalls(pl.Callback):
         
     def on_train_epoch_end(self, trainer, pl_module):
         # Common operations
-        s = 0 # TODO: using the first session only
-        batch = pl_module.current_batch[s]
+        batch = pl_module.current_batch
         save_var = pl_module.save_var
         kwargs = {"batch": batch, "save_var": save_var, "log_metrics": self.callbacks[0].metrics} ## Log needs to be the first callback
         
@@ -71,8 +74,7 @@ class OnEpochEndCalls(pl.Callback):
                                 trainer,
                                 pl_module):
         # Common operations
-        s = 0 # TODO: using the first session only
-        batch = pl_module.current_batch[s]
+        batch = pl_module.current_batch
         save_var = pl_module.save_var
         kwargs = {"batch": batch, "save_var": save_var, "log_metrics": self.callbacks[0].metrics}
         
@@ -83,47 +85,6 @@ class OnEpochEndCalls(pl.Callback):
 
     
 # ===== Classes that are on_validation_epoch_end ===== #
-
-class CalcCorrCoef:
-    def __init__(self,
-                log_every_n_epochs: int = 1):
-        self.log_every_n_epochs = log_every_n_epochs
-        self.smoothing_func = lambda x: gaussian_filter1d(x.astype(float), sigma=10)
-        
-    def run(self, trainer, pl_module, **kwargs):
-        if (trainer.current_epoch % self.log_every_n_epochs) != 0:
-            return
-        
-        # Get variables
-        s = 0 ##
-        batch, save_var = kwargs["batch"], kwargs["save_var"]
-        ic_enc_seq_len = pl_module.hparams.ic_enc_seq_len
-        
-        for area_name, area in pl_module.areas.items():
-            recon_data = batch.recon_data[area_name].detach().cpu().numpy()[:, ic_enc_seq_len:]
-            recon_data = recon_data.reshape(-1, area.hparams.encod_data_dim).T # shape = (neurons, batch * time)
-            infer_data = torch.exp(save_var[area_name].outputs.detach().cpu()).numpy()
-            infer_data = infer_data.reshape(-1, area.hparams.encod_data_dim).T
-            
-            corrs = []
-            for an in area.recon[s].active_neurons:
-                smoothed_data = self.smoothing_func(recon_data[an])
-                corr = np.corrcoef(infer_data[an], smoothed_data)[0][1]
-                corrs.append(corr)
-            area.recon[s].log_corrcoef(torch.Tensor(corrs))
-            
-class FreezeZIPoisson:
-    def __init__(self,
-                log_every_n_epochs: int = 10):
-        self.log_every_n_epochs = log_every_n_epochs
-        
-    def run(self, trainer, pl_module, **kwargs):
-        if (trainer.current_epoch % self.log_every_n_epochs) != 0:
-            return
-        
-        s = 0 ##
-        for area_name, area in pl_module.areas.items():
-            area.recon[s].mask_neurons()
 
 class Log:
     def __init__(self,
@@ -171,6 +132,9 @@ class InferredRatesPlot:
         batch, save_var = kwargs["batch"], kwargs["save_var"]
         units = pl_module.maximum_activity_units(self.n_samples)
         ic_enc_seq_len = pl_module.hparams.ic_enc_seq_len
+        
+        batch_sizes = [batch[s].encod_data[self.area_names[0]].size(0) for s in sessions]
+        rates_split = torch.split(self.save_var[area_name].outputs, batch_sizes)
         
         # Create subplots
         n_rows, n_cols = len(pl_module.area_names) * self.n_samples, self.n_batches
@@ -286,7 +250,7 @@ class ProctorSummaryPlot:
     def __init__(self, log_every_n_epochs=10):
         self.log_every_n_epochs = log_every_n_epochs
         self.count = 0
-        self.corrs = []
+        self.corrs = {}
         
     def run(self, trainer, pl_module, **kwargs):
         # Check for conditions to not run
@@ -294,6 +258,7 @@ class ProctorSummaryPlot:
             return
         if self.count < 2:
             self.count += 1
+            for ia, area_name in enumerate(pl_module.areas): self.corrs[area_name] = []
             return
         
         # Access hyperparameters
@@ -335,10 +300,10 @@ class ProctorSummaryPlot:
             avg_rates = true_data.mean(axis=(0,1))
             smoothed_rates = batch_smoothing_func(true_data)
             corrs = batch_corrcoef(smoothed_rates, pred_rates)
-            self.corrs.append(np.mean(corrs))
+            self.corrs[area_name].append(np.mean(corrs))
             
             axes[1][0].plot(log_metrics[f"{area_name}/recon"][1:], label=area_name)
-            axes[1][1].plot(self.corrs[1:], label=area_name)
+            axes[1][1].plot(self.corrs[area_name][1:], label=area_name)
             axes[2][0].plot(log_metrics[f"{area_name}/kl/co"][1:], label=area_name)
             axes[2][1].plot(log_metrics[f"{area_name}/kl/com"][1:], label=area_name)
             axes[3][0].plot(log_metrics[f"{area_name}/l2"][1:], label=area_name)
@@ -502,19 +467,34 @@ class ICPCAPlot:
 # ===== Functions that are on_init_end ===== #
         
 def get_maximum_activity_units(trainer, pl_module, batch):
+    """
+    Find the maximum activity units for each session.
+    
+    Returns:
+        - (callable): given session index, number of samples, returns maximum activity unit indices
+    """
     units = {}
-    for area_name in pl_module.area_names:
-        arr = batch.recon_data[area_name].detach().cpu().numpy() # shape = (B, T, N)
-        arr = arr.reshape(-1, arr.shape[-1]) # shape = (B*T, N)
-        indices = np.flip(np.argsort(arr.mean(0))) # according to mean across batch, time
-        units[area_name] = indices
-    pl_module.maximum_activity_units = lambda n_samples: {k: v[:n_samples] for k, v in units.items()}
+    for s in range(len(batch)):
+        units[s] = {}
+        for area_name in pl_module.area_names:
+            arr = batch[s].recon_data[area_name].detach().cpu().numpy() # shape = (B, T, N)
+            arr = arr.reshape(-1, arr.shape[-1]) # shape = (B*T, N)
+            indices = np.flip(np.argsort(arr.mean(0))) # according to mean across batch, time
+            units[s][area_name] = indices
+        pl_module.maximum_activity_units = lambda s, n_samples: {k: v[:n_samples] for k, v in units[s].items()}
     
+def get_conditions(trainer, pl_module, info_strings):
+    """
+    Get all conditions and their corresponding indices for each session.
     
-def get_conditions(trainer, pl_module, batch, info_strings):
-    categories, inverse_indices = np.unique(info_strings, return_inverse=True)
-    unique_indices = [np.where(inverse_indices == i)[0] for i in range(len(categories))]
-    pl_module.conditions = (categories, unique_indices)
+    Returns:
+        - (dict): keys: session, values: (categories, corresponding indices)
+    """
+    pl_module.conditions = {}
+    for s, info_string in enumerate(info_strings):
+        categories, inverse_indices = np.unique(info_string, return_inverse=True)
+        unique_indices = [np.where(inverse_indices == i)[0] for i in range(len(categories))]
+        pl_module.conditions[s] = (categories, unique_indices)
         
 def proctor_preview_plot(trainer, pl_module):
     # Access hyperparameters
@@ -522,7 +502,7 @@ def proctor_preview_plot(trainer, pl_module):
     epochs = np.arange(0, trainer.max_epochs)
 
     # Create subplots
-    n_rows, n_cols = 2, 1
+    n_rows, n_cols = 1, 2
     fig, axes = plt.subplots(
         n_rows,
         n_cols,
@@ -535,21 +515,21 @@ def proctor_preview_plot(trainer, pl_module):
     # Plot lowest possible learning rate
     if hps.lr_scheduler:
         geom = lambda epoch: hps.lr_init * np.power(hps.lr_decay, epoch // hps.lr_patience)
-        axes[0].plot(epochs, geom(epochs), "k")
-        axes[0].set_title(f"Lowest lr: {round(geom(trainer.max_epochs) ,6)}")
+        axes[0][0].plot(epochs, geom(epochs), "k")
+        axes[0][0].set_title(f"Lowest lr: {round(geom(trainer.max_epochs) ,6)}")
     else:
-        axes[0].hlines(y=lr_init, xmin=0, xmax=epochs[-1], color='k')
-        axes[0].set_title(f"Lowest lr: {hps.lr_init}")
-    axes[0].set_ylabel("learning rate")
+        axes[0][0].hlines(y=lr_init, xmin=0, xmax=epochs[-1], color='k')
+        axes[0][0].set_title(f"Lowest lr: {hps.lr_init}")
+    axes[0][0].set_ylabel("learning rate")
 
     # Plot KL divergence history
     kl_ramp_u = pl_module.compute_ramp_inner(torch.from_numpy(epochs), hps.kl_start_epoch_u, hps.kl_increase_epoch_u) * hps.kl_co_scale
     kl_ramp_m = pl_module.compute_ramp_inner(torch.from_numpy(epochs), hps.kl_start_epoch_m, hps.kl_increase_epoch_m) * hps.kl_com_scale
-    axes[1].plot(kl_ramp_u, "k", label="u")
-    axes[1].plot(kl_ramp_m, "b--", label="m")
-    axes[1].set_ylabel("KL divergence")
-    axes[1].set_title("KL Divergence History")
-    axes[1].legend()
+    axes[0][1].plot(kl_ramp_u, "k", label="u")
+    axes[0][1].plot(kl_ramp_m, "b--", label="m")
+    axes[0][1].set_ylabel("KL divergence")
+    axes[0][1].set_title("KL Divergence History")
+    axes[0][1].legend()
 
     plt.tight_layout()
     plt.savefig(f"{SAVE_DIR}/proctor_preview.png")
