@@ -1,7 +1,7 @@
 _target_: lfads_torch.model.MRLFADS
 
 # --------- sequence length --------- #
-num_other_areas: 3
+num_other_areas: 1
 encod_seq_len: 500
 recon_seq_len: 500
 ic_enc_seq_len: 50
@@ -54,53 +54,6 @@ cell_clip: 5.0
 
 # --------- area specification --------- #
 areas_info:
-    SMA5:
-        # --------- architecture --------- #
-        encod_data_dim: 34
-        ext_input_dim: 0
-        ic_enc_dim: 64
-        ci_enc_dim: 64
-        ci_lag: 1
-        con_dim: 64
-        co_dim: 4
-        ic_dim: 64
-        gen_dim: 200
-        fac_dim: ${model.areas_info.SMA5.encod_data_dim}
-        com_dim: 4
-
-        # --------- readin / readout --------- #
-        readin:
-          - _target_: torch.nn.Identity
-        readout:
-          _target_: torch.nn.ModuleList
-          modules:
-            - _target_: lfads_torch.modules.readin_readout.FanInLinear
-              in_features: ${model.areas_info.SMA5.fac_dim}
-              out_features: ${model.areas_info.SMA5.encod_data_dim}
-
-        # --------- priors / posteriors --------- #
-        reconstruction:
-          - _target_: lfads_torch.modules.recons.Poisson
-        reconstruction_null:
-          - _target_: lfads_torch.modules.recons.PoissonBPS
-        co_prior:
-          _target_: lfads_torch.modules.priors.MultivariateNormal
-          mean: 0
-          variance: 0.1
-          shape: ${model.areas_info.SMA5.co_dim}
-        ic_prior:
-          _target_: lfads_torch.modules.priors.MultivariateNormal
-          mean: 0
-          variance: 0.1
-          shape: ${model.areas_info.SMA5.ic_dim}
-        com_prior:
-          _target_: lfads_torch.modules.priors.MultivariateNormal
-          mean: 0
-          variance: 0.1
-          shape: ${eval:${model.areas_info.SMA5.com_dim} * ${model.num_other_areas}}
-        ic_post_var_min: 1.0e-4
-        co_post_var_min: 1.0e-4
-        m_post_var_min: 1.0e-4
         
     SMA2,3:
         # --------- architecture --------- #
@@ -128,7 +81,10 @@ areas_info:
 
         # --------- priors / posteriors --------- #
         reconstruction:
-          - _target_: lfads_torch.modules.recons.Poisson
+          _target_: torch.nn.ModuleList
+          modules:
+            - _target_: lfads_torch.modules.recons.ZeroInflatedPoisson
+              data_dim: ${model.areas_info.SMA2,3.encod_data_dim}
         reconstruction_null:
           - _target_: lfads_torch.modules.recons.PoissonBPS
         co_prior:
@@ -146,54 +102,6 @@ areas_info:
           mean: 0
           variance: 0.1
           shape: ${eval:${model.areas_info.SMA2,3.com_dim} * ${model.num_other_areas}}
-        ic_post_var_min: 1.0e-4
-        co_post_var_min: 1.0e-4
-        m_post_var_min: 1.0e-4
-        
-    FP5:
-        # --------- architecture --------- #
-        encod_data_dim: 38
-        ext_input_dim: 0
-        ic_enc_dim: 64
-        ci_enc_dim: 64
-        ci_lag: 1
-        con_dim: 64
-        co_dim: 4
-        ic_dim: 64
-        gen_dim: 200
-        fac_dim: ${model.areas_info.FP5.encod_data_dim}
-        com_dim: 4
-
-        # --------- readin / readout --------- #
-        readin:
-          - _target_: torch.nn.Identity
-        readout:
-          _target_: torch.nn.ModuleList
-          modules:
-            - _target_: lfads_torch.modules.readin_readout.FanInLinear
-              in_features: ${model.areas_info.FP5.fac_dim}
-              out_features: ${model.areas_info.FP5.encod_data_dim}
-
-        # --------- priors / posteriors --------- #
-        reconstruction:
-          - _target_: lfads_torch.modules.recons.Poisson
-        reconstruction_null:
-          - _target_: lfads_torch.modules.recons.PoissonBPS
-        co_prior:
-          _target_: lfads_torch.modules.priors.MultivariateNormal
-          mean: 0
-          variance: 0.1
-          shape: ${model.areas_info.FP5.co_dim}
-        ic_prior:
-          _target_: lfads_torch.modules.priors.MultivariateNormal
-          mean: 0
-          variance: 0.1
-          shape: ${model.areas_info.FP5.ic_dim}
-        com_prior:
-          _target_: lfads_torch.modules.priors.MultivariateNormal
-          mean: 0
-          variance: 0.1
-          shape: ${eval:${model.areas_info.FP5.com_dim} * ${model.num_other_areas}}
         ic_post_var_min: 1.0e-4
         co_post_var_min: 1.0e-4
         m_post_var_min: 1.0e-4
@@ -224,7 +132,10 @@ areas_info:
 
         # --------- priors / posteriors --------- #
         reconstruction:
-          - _target_: lfads_torch.modules.recons.Poisson
+          _target_: torch.nn.ModuleList
+          modules:
+            - _target_: lfads_torch.modules.recons.ZeroInflatedPoisson
+              data_dim: ${model.areas_info.FP2,3.encod_data_dim}
         reconstruction_null:
           - _target_: lfads_torch.modules.recons.PoissonBPS
         co_prior:

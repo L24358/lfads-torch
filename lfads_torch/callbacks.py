@@ -191,14 +191,16 @@ class InferredRatesPlot:
             recon_data = batch.recon_data[area_name].detach().cpu().numpy()[:, ic_enc_seq_len:]
             infer_data = torch.exp(save_var[area_name].outputs.detach().cpu()).numpy()
             
-            # non_zero_prob = 1 - area.recon[s].zero_prob.detach().cpu().numpy() ## New
-            non_zero_prob = np.ones(infer_data.shape[-1]) ## For Poisson
+            if area.recon[s].name == "zipoisson":
+                non_zero_prob = 1 - area.recon[s].zero_prob.detach().cpu().numpy()
+            elif area.recon[s].name == "poisson":
+                non_zero_prob = np.ones(infer_data.shape[-1])
 
             for jn in units[area_name]:
                 
                 for ib in range(self.n_batches):
                     axes[count][ib].plot(recon_data[ib, :, jn], "gray", alpha=0.5)
-                    axes[count][ib].plot(infer_data[ib, :, jn] * non_zero_prob[jn], "b") ## New
+                    axes[count][ib].plot(infer_data[ib, :, jn] * non_zero_prob[jn], "b")
                     axes[count][ib].plot(self.smoothing_func(recon_data[ib, :, jn]), "k--")
                     
                 axes[count][0].set_ylabel(f"area {area_name}, neuron #{jn}")
@@ -249,8 +251,11 @@ class PSTHPlot:
             for area_name, area in pl_module.areas.items():
                 recon_data = batch.recon_data[area_name].detach().cpu().numpy()[:, ic_enc_seq_len:]
                 infer_data = torch.exp(save_var[area_name].outputs.detach().cpu()).numpy() # TODO: exp
-                # non_zero_prob = 1 - area.recon[s].zero_prob.detach().cpu().numpy() ## New
-                non_zero_prob = np.ones(infer_data.shape[-1]) ## For Poisson
+                
+                if area.recon[s].name == "zipoisson":
+                    non_zero_prob = 1 - area.recon[s].zero_prob.detach().cpu().numpy()
+                elif area.recon[s].name == "poisson":
+                    non_zero_prob = np.ones(infer_data.shape[-1])
 
                 for jn in units[area_name]:
                     x_mean = self.smoothing_func(recon_data[included_batches, :, jn].mean(axis=0)) # shape = (T,)
@@ -258,8 +263,8 @@ class PSTHPlot:
                     x_std = self.smoothing_func(recon_data[included_batches, :, jn].std(axis=0)) # shape = (T,)
                     r_std = infer_data[included_batches, :, jn].std(axis=0) # shape = (T,)
                     
-                    r_mean *= non_zero_prob[jn] ## New
-                    r_std *= abs(non_zero_prob[jn]) ## New
+                    r_mean *= non_zero_prob[jn]
+                    r_std *= abs(non_zero_prob[jn])
                     ax_col[count].plot(r_mean, "b")
                     ax_col[count].plot(x_mean, "k")
                     ax_col[count].plot(range(len(r_mean)), r_mean, "b")
@@ -281,6 +286,7 @@ class ProctorSummaryPlot:
     def __init__(self, log_every_n_epochs=10):
         self.log_every_n_epochs = log_every_n_epochs
         self.count = 0
+        self.corrs = []
         
     def run(self, trainer, pl_module, **kwargs):
         # Check for conditions to not run
@@ -298,7 +304,7 @@ class ProctorSummaryPlot:
         seq_len = hps.recon_seq_len - hps.ic_enc_seq_len
     
         # Create subplots
-        n_rows, n_cols = 5, 2
+        n_rows, n_cols = 4, 2
         fig, axes = plt.subplots(
             n_rows,
             n_cols,
@@ -307,64 +313,66 @@ class ProctorSummaryPlot:
             figsize=(3 * n_cols, 2 * n_rows),
         )
         common_label(fig, "epochs", "")
-    
+        
         # Plot lowest possible learning rate
-        axes[0][0].plot(log_metrics["lr-AdamW"], "k")
+        axes[0][0].plot(log_metrics["lr-AdamW"][1:], "k")
         axes[0][0].set_title("Learning Rate History")
         axes[0][0].set_ylabel("learning rate")
         axes[0][0].set_xlabel("steps")
         
         # Plot KL divergence ramp history
-        axes[0][1].plot(log_metrics["valid/kl/ramp/u"], "k", label="u")
-        axes[0][1].plot(log_metrics["valid/kl/ramp/m"], "b--", label="m")
+        axes[0][1].plot(log_metrics["valid/kl/ramp/u"][1:], "k", label="u")
+        axes[0][1].plot(log_metrics["valid/kl/ramp/m"][1:], "b--", label="m")
         axes[0][1].set_ylabel("KL divergence")
         axes[0][1].set_title("KL Coefficient History")
         axes[0][1].legend()
         
-        axes[1][0].plot(log_metrics["train/recon"], label="train recon")
-        axes[1][0].plot(log_metrics["valid/recon"], label="val recon")
-        axes[1][0].set_ylabel("loss")
-        axes[1][0].set_title("Reconstruction Loss History")
-        axes[1][0].legend()
-        
-        axes[2][0].plot(log_metrics["train/kl/u"], label="train kl (u)")
-        axes[2][0].plot(log_metrics["valid/kl/u"], label="val kl (u)")
-        axes[2][0].plot(log_metrics["train/kl/m"], label="train kl (m)")
-        axes[2][0].plot(log_metrics["valid/kl/m"], label="val kl (m)")
-        axes[2][0].set_ylabel("loss")
-        axes[2][0].set_title("KL Divergence Loss History")
-        axes[2][0].legend()
-        
-        axes[3][0].plot(log_metrics["train/l2"], label="train l2")
-        axes[3][0].plot(log_metrics["valid/l2"], label="val l2")
-        axes[3][0].set_ylabel("loss")
-        axes[3][0].set_title("L2 Regularization Loss History")
-        axes[3][0].legend()
-        
-        axes[4][0].plot(log_metrics["train/r2"], label="train r2")
-        axes[4][0].plot(log_metrics["valid/r2"], label="val r2")
-        axes[4][0].set_ylabel("loss")
-        axes[4][0].set_title("Pseudo R-Square History")
-        axes[4][0].legend()
-        
         for ia, area_name in enumerate(pl_module.areas):
-            axes[1][1].plot(log_metrics[f"{area_name}/recon"], label=area_name)
-            axes[2][1].plot(log_metrics[f"{area_name}/kl/co"] + log_metrics[f"{area_name}/kl/com"], label=area_name)
-            axes[3][1].plot(log_metrics[f"{area_name}/l2"], label=area_name)
-            axes[4][1].plot(log_metrics[f"{area_name}/r2"], label=area_name)
-        axes[1][1].set_title("Reconstruction Loss History")
-        axes[2][1].set_title("KL Divergence Loss History")
-        axes[3][1].set_title("L2 Regularization Loss History")
-        axes[4][1].set_title("Pseudo R-Square History")
+            
+            # Compute correlation
+            true_data = batch.recon_data[area_name][:, hps.ic_enc_seq_len:].cpu().detach().numpy()
+            pred_rates = save_var[area_name].outputs.cpu().detach().numpy()
+            avg_rates = true_data.mean(axis=(0,1))
+            smoothed_rates = batch_smoothing_func(true_data)
+            corrs = batch_corrcoef(smoothed_rates, pred_rates)
+            self.corrs.append(np.mean(corrs))
+            
+            axes[1][0].plot(log_metrics[f"{area_name}/recon"][1:], label=area_name)
+            axes[1][1].plot(self.corrs[1:], label=area_name)
+            axes[2][0].plot(log_metrics[f"{area_name}/kl/co"][1:], label=area_name)
+            axes[2][1].plot(log_metrics[f"{area_name}/kl/com"][1:], label=area_name)
+            axes[3][0].plot(log_metrics[f"{area_name}/l2"][1:], label=area_name)
+            axes[3][1].plot(log_metrics[f"{area_name}/r2"][1:], label=area_name)
+        axes[1][0].set_title("Reconstruction Loss")
+        axes[1][1].set_title("Correlation")
+        axes[2][0].set_title("KL Divergence Loss (u)")
+        axes[2][1].set_title("KL Divergence Loss (m)")
+        axes[3][0].set_title("L2 Regularization Loss")
+        axes[3][1].set_title("Pseudo R-Square")
+        axes[1][0].legend()
         axes[1][1].legend()
+        axes[2][0].legend()
         axes[2][1].legend()
+        axes[3][0].legend()
         axes[3][1].legend()
-        axes[4][1].legend()
+        axes[1][0].set_ylabel("loss") 
+        axes[2][0].set_ylabel("loss") 
+        axes[3][0].set_ylabel("loss") 
         
         plt.tight_layout()
         plt.savefig(f"{SAVE_DIR}/proctor_summary_plot_epoch{trainer.current_epoch}.png")
         plt.close("all")
         return {}
+    
+def batch_smoothing_func(x):
+    smoothing_func = lambda x: gaussian_filter1d(x.astype(float), sigma=10)
+    return np.apply_along_axis(smoothing_func, axis=1, arr=x)
+
+def batch_corrcoef(x, y):
+    N = x.shape[2]
+    x_reshape = x.reshape(-1, N) # shape = (B*T, N)
+    y_reshape = y.reshape(-1, N)
+    return [np.corrcoef(x_reshape[:, i], y_reshape[:, i])[0][1] for i in range(N)]
 
 class CommunicationPSTHPlot:
     """
@@ -535,8 +543,8 @@ def proctor_preview_plot(trainer, pl_module):
     axes[0].set_ylabel("learning rate")
 
     # Plot KL divergence history
-    kl_ramp_u = pl_module.compute_ramp_inner(torch.from_numpy(epochs), hps.kl_start_epoch_u, hps.kl_increase_epoch_u)
-    kl_ramp_m = pl_module.compute_ramp_inner(torch.from_numpy(epochs), hps.kl_start_epoch_m, hps.kl_increase_epoch_m)
+    kl_ramp_u = pl_module.compute_ramp_inner(torch.from_numpy(epochs), hps.kl_start_epoch_u, hps.kl_increase_epoch_u) * hps.kl_co_scale
+    kl_ramp_m = pl_module.compute_ramp_inner(torch.from_numpy(epochs), hps.kl_start_epoch_m, hps.kl_increase_epoch_m) * hps.kl_com_scale
     axes[1].plot(kl_ramp_u, "k", label="u")
     axes[1].plot(kl_ramp_m, "b--", label="m")
     axes[1].set_ylabel("KL divergence")

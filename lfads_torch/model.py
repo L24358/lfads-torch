@@ -180,16 +180,23 @@ class MRLFADS(pl.LightningModule):
             recon = torch.mean(torch.stack(sess_recon))
             mr_recon += recon
             
-            # Compute r-squared
-            r2 = []
-            for s in sessions:
-                area_recon = batch[s].recon_data[area_name][:,recon_start:]
-                area_infer = self.save_var[area_name].outputs
-                area_base = torch.mean(area_recon.float(), dim=1, keepdim=True).repeat(1, hps.recon_seq_len - hps.ic_enc_seq_len, 1) + 1e-16
-                loss_model = area.recon[s].compute_loss_main(area_recon, area_infer)
-                loss_null = area.recon[s].compute_loss_main(area_recon, area_base)
-                r2.append( (1 - loss_model / loss_null).mean().item() )
-            r2 = np.mean(r2)
+            # Compute r-squared (original code)
+            # r2 = []
+            # for s in sessions:
+            #     area_recon = batch[s].recon_data[area_name][:,recon_start:]
+            #     area_infer = self.save_var[area_name].outputs
+            #     area_base = torch.mean(area_recon.float(), dim=1, keepdim=True).repeat(1, hps.recon_seq_len - hps.ic_enc_seq_len, 1) + 1e-16
+            #     loss_model = area.recon[s].compute_loss_main(area_recon, area_infer)
+            #     loss_null = area.recon[s].compute_loss_main(area_recon, area_base)
+            #     r2.append( (1 - loss_model / loss_null).mean().item() )
+            # r2 = np.mean(r2)
+            
+            # Compute r-squared using built-in functions
+            r2_all = [area.recon[s].compute_pseudo_r2(
+                batch[s].recon_data[area_name][:,recon_start:],
+                rates_split[s])
+            for s in sessions]
+            r2 = np.mean(r2_all)
             
             # Compute L2 loss
             l2 = sr_compute_l2_penalty(area, hps)

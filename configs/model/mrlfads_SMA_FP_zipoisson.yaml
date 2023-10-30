@@ -39,11 +39,11 @@ l2_gen_scale: 1.0e-2
 l2_con_scale: 1.0e-2
 kl_start_epoch_u: 0
 kl_increase_epoch_u: 80
-kl_start_epoch_m: 150
-kl_increase_epoch_m: 200
+kl_start_epoch_m: 80
+kl_increase_epoch_m: 800
 kl_ic_scale: 5.0e-2
-kl_co_scale: 2.5e-1
-kl_com_scale: 5.0e-2
+kl_co_scale: 1.0e-1
+kl_com_scale: 5.0e-5
 
 # --------- misc --------- #
 variational: True

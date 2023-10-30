@@ -85,12 +85,14 @@ def run_model(
     else:
         if checkpoint_dir:
             # If not training, restore model from the checkpoint
-            model.load_state_dict(torch.load(ckpt_path)["state_dict"])
+            ckpt = torch.load(ckpt_path)
+            model.load_state_dict(ckpt["state_dict"])
+            return model, datamodule, ckpt
 
     # Run the posterior sampling function
     if do_posterior_sample:
         if torch.cuda.is_available():
             model = model.to("cuda")
         call(config.posterior_sampling.fn, model=model, datamodule=datamodule)
-    
-    return model, datamodule
+
+    return None

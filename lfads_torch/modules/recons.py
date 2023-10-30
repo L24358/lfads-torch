@@ -36,6 +36,15 @@ class ZeroInflatedPoisson(nn.Module):
 
     def compute_loss_main(self, data, output_params):
         return self.compute_loss(data, output_params)
+    
+    def compute_pseudo_r2(self, data, output_params):
+        nll_model = self.compute_loss_main(data, output_params)
+        nll_null = self.compute_loss_main(
+            data,
+            torch.mean(data.to(torch.float), dim=(0, 1), keepdim=True).repeat(*list(data.shape[:2]) + [1]) + 1e-16,
+        )
+        return (1 - nll_model / nll_null).mean().item()
+        # return (nll_model - nll_null) / (torch.log(torch.tensor(2)) * torch.mean(data.to(torch.float)))
 
 class Reconstruction(abc.ABC):
     @abc.abstractmethod
@@ -78,6 +87,17 @@ class Poisson(Reconstruction):
         """Performs reshape, then computes loss."""
         return self.compute_loss(data, self.reshape_output_params(output_params))
     
+    def compute_pseudo_r2(self, data, output_params):
+        nll_model = self.compute_loss_main(data, output_params)
+        nll_null = F.poisson_nll_loss(
+            data,
+            torch.mean(data.to(torch.float), dim=(0, 1), keepdim=True).repeat(*list(data.shape[:2]) + [1]) + 1e-16,
+            full=True,
+            reduction="none",
+        )
+        return (1 - nll_model / nll_null).mean().item()
+        # return (nll_model - nll_null) / (torch.log(torch.tensor(2)) * torch.mean(data.to(torch.float)))
+    
 class PoissonBPS(Poisson):
     def compute_loss(self, data, output_params):
         nll_model = super().compute_loss(data, output_params)
@@ -89,7 +109,6 @@ class PoissonBPS(Poisson):
             reduction="none",
         )
         return (nll_model - nll_null) / (torch.log(torch.tensor(2)) * torch.mean(data))
-
 
 class MSE(Reconstruction):
     def __init__(self):
