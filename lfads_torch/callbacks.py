@@ -286,7 +286,7 @@ class ProctorSummaryPlot:
     def __init__(self, log_every_n_epochs=10):
         self.log_every_n_epochs = log_every_n_epochs
         self.count = 0
-        self.corrs = []
+        self.corrs = {}
         
     def run(self, trainer, pl_module, **kwargs):
         # Check for conditions to not run
@@ -294,6 +294,7 @@ class ProctorSummaryPlot:
             return
         if self.count < 2:
             self.count += 1
+            for ia, area_name in enumerate(pl_module.areas): self.corrs[area_name] = []
             return
         
         # Access hyperparameters
@@ -335,10 +336,10 @@ class ProctorSummaryPlot:
             avg_rates = true_data.mean(axis=(0,1))
             smoothed_rates = batch_smoothing_func(true_data)
             corrs = batch_corrcoef(smoothed_rates, pred_rates)
-            self.corrs.append(np.mean(corrs))
+            self.corrs[area_name].append(np.mean(corrs))
             
             axes[1][0].plot(log_metrics[f"{area_name}/recon"][1:], label=area_name)
-            axes[1][1].plot(self.corrs[1:], label=area_name)
+            axes[1][1].plot(self.corrs[area_name][1:], label=area_name)
             axes[2][0].plot(log_metrics[f"{area_name}/kl/co"][1:], label=area_name)
             axes[2][1].plot(log_metrics[f"{area_name}/kl/com"][1:], label=area_name)
             axes[3][0].plot(log_metrics[f"{area_name}/l2"][1:], label=area_name)
