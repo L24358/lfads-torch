@@ -515,21 +515,21 @@ def proctor_preview_plot(trainer, pl_module):
     # Plot lowest possible learning rate
     if hps.lr_scheduler:
         geom = lambda epoch: hps.lr_init * np.power(hps.lr_decay, epoch // hps.lr_patience)
-        axes[0][0].plot(epochs, geom(epochs), "k")
-        axes[0][0].set_title(f"Lowest lr: {round(geom(trainer.max_epochs) ,6)}")
+        axes[0].plot(epochs, geom(epochs), "k")
+        axes[0].set_title(f"Lowest lr: {round(geom(trainer.max_epochs) ,6)}")
     else:
-        axes[0][0].hlines(y=lr_init, xmin=0, xmax=epochs[-1], color='k')
-        axes[0][0].set_title(f"Lowest lr: {hps.lr_init}")
-    axes[0][0].set_ylabel("learning rate")
+        axes[0].hlines(y=lr_init, xmin=0, xmax=epochs[-1], color='k')
+        axes[0].set_title(f"Lowest lr: {hps.lr_init}")
+    axes[0].set_ylabel("learning rate")
 
     # Plot KL divergence history
     kl_ramp_u = pl_module.compute_ramp_inner(torch.from_numpy(epochs), hps.kl_start_epoch_u, hps.kl_increase_epoch_u) * hps.kl_co_scale
     kl_ramp_m = pl_module.compute_ramp_inner(torch.from_numpy(epochs), hps.kl_start_epoch_m, hps.kl_increase_epoch_m) * hps.kl_com_scale
-    axes[0][1].plot(kl_ramp_u, "k", label="u")
-    axes[0][1].plot(kl_ramp_m, "b--", label="m")
-    axes[0][1].set_ylabel("KL divergence")
-    axes[0][1].set_title("KL Divergence History")
-    axes[0][1].legend()
+    axes[1].plot(kl_ramp_u, "k", label="u")
+    axes[1].plot(kl_ramp_m, "b--", label="m")
+    axes[1].set_ylabel("KL divergence")
+    axes[1].set_title("KL Divergence History")
+    axes[1].legend()
 
     plt.tight_layout()
     plt.savefig(f"{SAVE_DIR}/proctor_preview.png")
