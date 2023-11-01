@@ -1,4 +1,4 @@
-# hash:sha256:2626afff485bebab95075479a1e2ec0e8169a3c34e75cae104d8e709814776b3
+# hash:sha256:7782d3957ac5fb08f76405c9b8be3f5deac44fa653a3ed8a9894f160fbc553be
 FROM registry.codeocean.allenneuraldynamics.org/codeocean/miniconda3:4.9.2-cuda11.7.0-cudnn8-ubuntu20.04
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -23,6 +23,13 @@ RUN pip3 install -U --no-cache-dir \
     seaborn==0.12.2 \
     torch==1.13.1 \
     wandb==0.15.11
+
+ADD "https://github.com/coder/code-server/releases/download/v4.9.0/code-server-4.9.0-linux-amd64.tar.gz" /.code-server/code-server.tar.gz
+	
+RUN cd /.code-server \
+	&& tar -xvf code-server.tar.gz \
+	&& rm code-server.tar.gz \
+	&& ln -s /.code-server/code-server-4.9.0-linux-amd64/bin/code-server  /usr/bin/code-server
 
 COPY postInstall /
 RUN /postInstall

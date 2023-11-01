@@ -63,7 +63,13 @@ class OnEpochEndCalls(pl.Callback):
         # Common operations
         batch = pl_module.current_batch
         save_var = pl_module.save_var
-        kwargs = {"batch": batch, "save_var": save_var, "log_metrics": self.callbacks[0].metrics} ## Log needs to be the first callback
+        batch_sizes = pl_module.batch_sizes
+        kwargs = {
+            "batch": batch,
+            "save_var": save_var,
+            "batch_sizes": batch_sizes,
+            "log_metrics": self.callbacks[0].metrics, ## Log needs to be the first callback
+            } 
         
         for i, callback in enumerate(self.callbacks):
             if int(self.in_train[i]):
@@ -76,7 +82,13 @@ class OnEpochEndCalls(pl.Callback):
         # Common operations
         batch = pl_module.current_batch
         save_var = pl_module.save_var
-        kwargs = {"batch": batch, "save_var": save_var, "log_metrics": self.callbacks[0].metrics}
+        batch_sizes = pl_module.batch_sizes
+        kwargs = {
+            "batch": batch,
+            "save_var": save_var,
+            "batch_sizes": batch_sizes,
+            "log_metrics": self.callbacks[0].metrics, ## Log needs to be the first callback
+            } 
         
         for i, callback in enumerate(self.callbacks):
             if not int(self.in_train[i]):
@@ -128,16 +140,13 @@ class InferredRatesPlot:
         if (trainer.current_epoch % self.log_every_n_epochs) != 0:
             return
 
-        # Get units
-        batch, save_var = kwargs["batch"], kwargs["save_var"]
-        units = pl_module.maximum_activity_units(self.n_samples)
+        # Extract data
+        batch, save_var, batch_sizes = kwargs["batch"], kwargs["save_var"], kwargs["batch_sizes"]
         ic_enc_seq_len = pl_module.hparams.ic_enc_seq_len
-        
-        batch_sizes = [batch[s].encod_data[self.area_names[0]].size(0) for s in sessions]
-        rates_split = torch.split(self.save_var[area_name].outputs, batch_sizes)
+        sessions = sorted(batch.keys())
         
         # Create subplots
-        n_rows, n_cols = len(pl_module.area_names) * self.n_samples, self.n_batches
+        n_rows, n_cols = len(pl_module.area_names) * self.n_samples * len(sessions), self.n_batches
         fig, axes = plt.subplots(
             n_rows,
             n_cols,
@@ -149,26 +158,32 @@ class InferredRatesPlot:
         common_col_title(fig, [f"Batch {i}" for i in range(n_cols)], (n_rows, n_cols))
         
         # Iterate through areas and take n_sample neurons
-        s = 0 ## TODO, New
         count = 0
         for area_name, area in pl_module.areas.items():
-            recon_data = batch.recon_data[area_name].detach().cpu().numpy()[:, ic_enc_seq_len:]
-            infer_data = torch.exp(save_var[area_name].outputs.detach().cpu()).numpy()
-            
-            if area.recon[s].name == "zipoisson":
-                non_zero_prob = 1 - area.recon[s].zero_prob.detach().cpu().numpy()
-            elif area.recon[s].name == "poisson":
-                non_zero_prob = np.ones(infer_data.shape[-1])
 
-            for jn in units[area_name]:
+            # Extract and split infer_data
+            infer_data_all = torch.exp(save_var[area_name].outputs.detach().cpu()).numpy()
+            infer_data_split = torch.split(infer_data_all, batch_sizes)
+
+            for s in sessions:
+                recon_data = batch[s].recon_data[area_name].detach().cpu().numpy()[:, ic_enc_seq_len:]
+                infer_data = infer_data_split[s]
+                units = pl_module.maximum_activity_units(s, self.n_samples)
                 
-                for ib in range(self.n_batches):
-                    axes[count][ib].plot(recon_data[ib, :, jn], "gray", alpha=0.5)
-                    axes[count][ib].plot(infer_data[ib, :, jn] * non_zero_prob[jn], "b")
-                    axes[count][ib].plot(self.smoothing_func(recon_data[ib, :, jn]), "k--")
+                if area.recon[s].name == "zipoisson":
+                    non_zero_prob = 1 - area.recon[s].zero_prob.detach().cpu().numpy()
+                elif area.recon[s].name == "poisson":
+                    non_zero_prob = np.ones(infer_data.shape[-1])
+                
+                for jn in units[area_name]:
                     
-                axes[count][0].set_ylabel(f"area {area_name}, neuron #{jn}")
-                count += 1
+                    for ib in range(self.n_batches):
+                        axes[count][ib].plot(recon_data[ib, :, jn], "gray", alpha=0.5)
+                        axes[count][ib].plot(infer_data[ib, :, jn] * non_zero_prob[jn], "b")
+                        axes[count][ib].plot(self.smoothing_func(recon_data[ib, :, jn]), "k--")
+                        
+                    axes[count][0].set_ylabel(f"{area_name}, sess {s}, neuron #{jn}")
+                    count += 1
 
         plt.tight_layout()
         plt.savefig(f"{SAVE_DIR}/inferred_rates_plot_epoch{trainer.current_epoch}.png")
@@ -191,9 +206,8 @@ class PSTHPlot:
         
         # Get data and outputs
         batch, save_var = kwargs["batch"], kwargs["save_var"]
-        units = pl_module.maximum_activity_units(self.n_samples)
-        categories, cond_indices = pl_module.conditions
         ic_enc_seq_len = pl_module.hparams.ic_enc_seq_len
+        sessions = sorted(batch.keys())
             
         # Create subplots
         n_rows, n_cols = len(pl_module.area_names) * self.n_samples, len(categories)
@@ -205,41 +219,55 @@ class PSTHPlot:
             figsize=(3 * n_cols, 2 * n_rows),
         )
 
-        # For each condition (category):
-        s = 0 ## TODO, New
+        # Iterate through each condition (category):
         for ic, ax_col in enumerate(axes.T):
             count = 0
-            included_batches = cond_indices[ic]
 
             # Iterate through areas and take n_sample neurons
             for area_name, area in pl_module.areas.items():
-                recon_data = batch.recon_data[area_name].detach().cpu().numpy()[:, ic_enc_seq_len:]
-                infer_data = torch.exp(save_var[area_name].outputs.detach().cpu()).numpy() # TODO: exp
-                
-                if area.recon[s].name == "zipoisson":
-                    non_zero_prob = 1 - area.recon[s].zero_prob.detach().cpu().numpy()
-                elif area.recon[s].name == "poisson":
-                    non_zero_prob = np.ones(infer_data.shape[-1])
 
-                for jn in units[area_name]:
-                    x_mean = self.smoothing_func(recon_data[included_batches, :, jn].mean(axis=0)) # shape = (T,)
-                    r_mean = infer_data[included_batches, :, jn].mean(axis=0) # shape = (T,)
-                    x_std = self.smoothing_func(recon_data[included_batches, :, jn].std(axis=0)) # shape = (T,)
-                    r_std = infer_data[included_batches, :, jn].std(axis=0) # shape = (T,)
+                infer_data_all = torch.exp(save_var[area_name].outputs.detach().cpu()).numpy()
+                infer_data_split = torch.split(infer_data_all, batch_sizes)
+
+                xs = []
+                rs = []
+
+                # Iterate through sessions
+                for s in sessions:
+
+                    units = pl_module.maximum_activity_units(s, self.n_samples)
+                    categories, cond_indices = pl_module.conditions[s]
+                    included_batches = cond_indices[ic]
+                    recon_data = batch[s].recon_data[area_name].detach().cpu().numpy()[:, ic_enc_seq_len:]
+                    infer_data = infer_data_split[s]
                     
-                    r_mean *= non_zero_prob[jn]
-                    r_std *= abs(non_zero_prob[jn])
-                    ax_col[count].plot(r_mean, "b")
-                    ax_col[count].plot(x_mean, "k")
-                    ax_col[count].plot(range(len(r_mean)), r_mean, "b")
-                    ax_col[count].plot(range(len(x_mean)), x_mean, "k--")
-                    ax_col[count].fill_between(range(len(r_mean)), r_mean - r_std, r_mean + r_std,
-                                               color="lightblue", alpha=0.5)
-                    ax_col[count].fill_between(range(len(x_mean)), x_mean - x_std, x_mean + x_std,
-                                               color="gray", alpha=0.5)
-                    ax_col[count].set_ylabel(f"{area_name}, neuron #{jn}")
-                    ax_col[count].set_title(categories[ic].replace("_", ", "))
-                    count += 1
+                    if area.recon[s].name == "zipoisson":
+                        non_zero_prob = 1 - area.recon[s].zero_prob.detach().cpu().numpy()
+                    elif area.recon[s].name == "poisson":
+                        non_zero_prob = np.ones(infer_data.shape[-1])
+
+                    for jn in units[area_name]:
+                        xs.append(recon_data[included_batches, :, jn]) # shape = (B, T)
+
+
+                        x_mean = self.smoothing_func(recon_data[included_batches, :, jn].mean(axis=0)) # shape = (T,)
+                        r_mean = infer_data[included_batches, :, jn].mean(axis=0) # shape = (T,)
+                        x_std = self.smoothing_func(recon_data[included_batches, :, jn].std(axis=0)) # shape = (T,)
+                        r_std = infer_data[included_batches, :, jn].std(axis=0) # shape = (T,)
+                        
+                        r_mean *= non_zero_prob[jn]
+                        r_std *= abs(non_zero_prob[jn])
+                        ax_col[count].plot(r_mean, "b")
+                        ax_col[count].plot(x_mean, "k")
+                        ax_col[count].plot(range(len(r_mean)), r_mean, "b")
+                        ax_col[count].plot(range(len(x_mean)), x_mean, "k--")
+                        ax_col[count].fill_between(range(len(r_mean)), r_mean - r_std, r_mean + r_std,
+                                                color="lightblue", alpha=0.5)
+                        ax_col[count].fill_between(range(len(x_mean)), x_mean - x_std, x_mean + x_std,
+                                                color="gray", alpha=0.5)
+                        ax_col[count].set_ylabel(f"{area_name}, neuron #{jn}")
+                        ax_col[count].set_title(categories[ic].replace("_", ", "))
+                        count += 1
 
         plt.tight_layout()
         plt.savefig(f"{SAVE_DIR}/psth_plot_epoch{trainer.current_epoch}.png")

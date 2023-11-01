@@ -77,8 +77,7 @@ class MRLFADS(pl.LightningModule):
     ):
         # Calculate total batch_size
         sessions = sorted(batch.keys())
-        batch_sizes = [batch[s].encod_data[self.area_names[0]].size(0) for s in sessions]
-        batch_size = sum(batch_sizes)
+        batch_size = sum(self.batch_sizes)
         self._build_save_var(batch_size)
         
         # Run encode
@@ -89,7 +88,7 @@ class MRLFADS(pl.LightningModule):
             encod_data = torch.cat([area.readin[s](batch[s].encod_data[area_name]) for s in sessions])
             ic_mean, ic_std, ci = area.encoder(encod_data.float())
             con_init, gen_init, factor_init = area.icsampler(ic_mean, ic_std, sample_posteriors=sample_posteriors)
-            factor_init_split = torch.split(factor_init, batch_sizes, dim=0)
+            factor_init_split = torch.split(factor_init, self.batch_sizes, dim=0)
             
             # Save the results
             state = torch.cat([torch.tile(con_init, (batch_size, 1)), gen_init, factor_init], dim=1)
@@ -122,7 +121,7 @@ class MRLFADS(pl.LightningModule):
                 # readout
                 factor_state = new_state[..., -area.hparams.fac_dim:]
                 factor_state_dict_new[area_name] = factor_state
-                factor_state_split = torch.split(factor_state, batch_sizes)
+                factor_state_split = torch.split(factor_state, self.batch_sizes)
                 rates = torch.cat([area.readout[s](factor_state_split[s]) for s in sessions], dim=0)
                 self.save_var[area_name].outputs[:,t,:] = rates
                 
@@ -141,8 +140,8 @@ class MRLFADS(pl.LightningModule):
         aug_stack = hps.train_aug_stack if split == "train" else self.hparams.infer_aug_stack
         batch = {s: b[0] for s, b in batch.items()} # ignore info, only data is relevant
         batch = {s: aug_stack.process_batch(batch[s]) for s in sessions}
-        batch_sizes = [batch[s].encod_data[self.area_names[0]].size(0) for s in sessions]
-        batch_size = sum(batch_sizes)
+        self.batch_sizes = [batch[s].encod_data[self.area_names[0]].size(0) for s in sessions]
+        batch_size = sum(self.batch_sizes)
         self.current_batch = batch
         
         # Forward pass
@@ -163,7 +162,7 @@ class MRLFADS(pl.LightningModule):
         for area_name, area in self.areas.items():
             
             # Compute + process reconstruction loss
-            rates_split = torch.split(self.save_var[area_name].outputs, batch_sizes)
+            rates_split = torch.split(self.save_var[area_name].outputs, self.batch_sizes)
             recon_all = [area.recon[s].compute_loss_main(
                 batch[s].recon_data[area_name][:,recon_start:],
                 rates_split[s])
@@ -231,7 +230,7 @@ class MRLFADS(pl.LightningModule):
                     area_metrics,
                     on_step=False,
                     on_epoch=True,
-                    batch_size=sum(batch_sizes),
+                    batch_size=sum(self.batch_sizes),
                 )
             
         # Log scalar metrics
@@ -262,7 +261,7 @@ class MRLFADS(pl.LightningModule):
             metrics,
             on_step=False,
             on_epoch=True,
-            batch_size=sum(batch_sizes),
+            batch_size=sum(self.batch_sizes),
         )
         
         return mr_loss
