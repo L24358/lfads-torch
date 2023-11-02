@@ -17,3 +17,10 @@ setup(
     install_requires=requirements,
     packages=find_packages(),
 )
+
+setup(
+    name="myle",
+    author="Belle Liu",
+    author_email="belle.l24358@gmail.com",
+    description="Make Your Life Easier (MYLE) Tools",
+)
