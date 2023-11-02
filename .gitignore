@@ -133,3 +133,5 @@ dmypy.json
 /data
 /results
 /code/graphs
+
+.vscode
