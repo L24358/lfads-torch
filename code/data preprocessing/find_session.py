@@ -1,9 +1,7 @@
 """
 Find appropriate subject/session given required brain areas and inclusion criterion.
 
-Args:
-    - required_areas (list): brain areas that need to be included
-    - criterions (callable): determines whether a brain area meets the criterions set
+Use required_areas = ["Primary somatosensory area, lower limb, layer 4"] for debugging.
 """
 import os
 import numpy as np
@@ -44,21 +42,28 @@ class Brain:
                 row["structure_id_path"],
                 row["abbreviation"],
                 row["depth in tree"])
+            
+    def is_available(self, target_id, available_ids):
+        target = self.brain_areas[target_id]
+        av_idxs = []
+        
+        for av_idx, av_id in enumerate(available_ids):
+            candidate = self.brain_areas[av_id]
+            if target_id in candidate.path[target.current_level:]: av_idxs.append(av_idx)
+        if len(av_idxs) > 0: return True, av_idxs
+        else: return False, None
+    
+    def get_name(self, ids):
+        return ", ".join([self.rev_id_dict[id] for id in ids])
     
     def _make_abbreviation_map(self):
         self.abbrev_dict = {}
         self.id_dict = {}
+        self.rev_id_dict = {}
         for struct, abbr, id in zip(self.df["full structure name"], self.df["abbreviation"], self.df["structure ID"]):
             self.abbrev_dict[struct] = abbr
             self.id_dict[struct] = id
-            
-    def is_available(self, target_id, available_ids):
-        target = self.brain_areas[target_id]
-        for av_idx, av_id in enumerate(available_ids):
-            
-            candidate = self.brain_areas[av_id]
-            if target_id in candidate.path[target.current_level:]: return True, av_idx
-        return False, None
+            self.rev_id_dict[id] = struct
 
 class BrainArea:
     def __init__(self, name, id, path, abbrev, depth):
@@ -88,15 +93,17 @@ def frate_criterion(frate, thre=0.01): return frate > thre
 if __name__ == "__main__":
     
     # USER DEFINED VARIABLES
-    required_areas = ["Primary somatosensory area, lower limb, layer 4"]
-    level = 4
+    required_areas = ["Thalamus", "Primary motor area", "Secondary motor area"]
+    uniform_level = False
+    level = 4 # only required when uniform_level = True
     
     # Build ccf brain
     summary_data_path = "/root/capsule/data/chen2023_summary_statistics/"
     ccf_df = pd.read_excel(summary_data_path + "allen_ccf_v3.xlsx", header=1)
     brain = Brain(ccf_df)
     brain.assign_interest_group(required_areas, data_type="name")
-    brain.assign_uniform_level(level)
+    if uniform_level: brain.assign_uniform_level(level)
+    print("Interested areas: ", brain.get_name(brain.interest_group), "\n")
     
     # process summary tables
     files = [os.path.join(summary_data_path, f) for f in os.listdir(summary_data_path) if "summary" in f]
@@ -110,16 +117,25 @@ if __name__ == "__main__":
         # if targets are in available areas
         areas_in, areas_pass_criterion = [], []
         for target_id in brain.interest_group:
-            is_in, sub_area_idx = brain.is_available(target_id, available_areas) 
+            is_in, sub_area_idxs = brain.is_available(target_id, available_areas) 
             if is_in:
                 areas_in.append(target_id)
                 
                 # if available areas meet numbers and firing rate criterion
-                row = group.iloc[sub_area_idx]
-                if num_neurons_criterion(row["# neurons"]) and frate_criterion(row["firing rate mean"]):
+                num_neurons, frate = [], []
+                for sub_area_idx in sub_area_idxs:
+                    row = group.iloc[sub_area_idx]
+                    num_neurons.append(row["# neurons"])
+                    frate.append(row["firing rate mean"])
+                frate = np.dot(np.array(num_neurons), np.array(frate)) / sum(num_neurons)
+                num_neurons = sum(num_neurons)
+                    
+                if num_neurons_criterion(num_neurons) and frate_criterion(frate):
                     areas_pass_criterion.append(target_id)
-            
     
-    
+        if len(areas_pass_criterion) == len(brain.interest_group):
+            print("Group ", group_name, " satisfied all criteria.")
+        elif len(areas_in) == len(brain.interest_group):
+            print("Group ", group_name, " satisfied the 'available' criterion.")
         
     
