@@ -93,7 +93,7 @@ def frate_criterion(frate, thre=0.01): return frate > thre
 if __name__ == "__main__":
     
     # USER DEFINED VARIABLES
-    required_areas = ["Thalamus", "Primary motor area", "Secondary motor area"]
+    required_areas = ["Ventral medial nucleus of the thalamus", "Ventral anterior-lateral complex of the thalamus", "Secondary motor area, layer 5", "Secondary motor area, layer 2/3"]
     uniform_level = False
     level = 4 # only required when uniform_level = True
     
