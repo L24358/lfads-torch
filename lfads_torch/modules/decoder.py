@@ -232,3 +232,28 @@ class SRDecoder(nn.Module):
         
         hidden = torch.cat([con_state, gen_state, factor], dim=1)
         return hidden, torch.cat([co_mean, co_std], dim=1), con_output # TODO: Assumes use_con is true!
+    
+class CommMimicker(nn.Module):
+    def __init__(self, hparams):
+        super().__init__()
+        self.hparams = hps = hparams
+        
+        self.con_cell = ClippedGRUCell(
+                hps.ci_enc_dim + hps.fac_dim, hps.com_dim, clip_value=hps.cell_clip
+            ).float()
+        self.co_linear = nn.Linear(hps.com_dim, hps.com_dim * 2)
+        init_linear_(self.co_linear)
+        
+    def forward(self, input, h_0, sample_posteriors=True):
+        hps = self.hparams
+        
+        con_state, gen_state, factor = torch.split(h_0.float(), [hps.con_dim, hps.gen_dim, hps.fac_dim], dim=1)
+        ci_step, com_step, _ = torch.split(input.float(), [hps.ci_enc_dim, hps.com_dim * self.num_other_areas, hps.co_dim], dim=1)
+
+        con_input = torch.cat([ci_step, factor], dim=1)
+        con_input_drop = self.dropout(con_input)
+        con_state = self.con_cell(con_input_drop, con_state)
+        co_params = self.co_linear(con_state)
+        co_mean, co_logvar = torch.split(co_params, hps.co_dim, dim=1)
+        co_std = torch.sqrt(torch.exp(co_logvar) + hps.co_post_var_min)
+        return co_mean, co_std

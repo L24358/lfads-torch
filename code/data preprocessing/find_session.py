@@ -54,7 +54,7 @@ class Brain:
         else: return False, None
     
     def get_name(self, ids):
-        return ", ".join([self.rev_id_dict[id] for id in ids])
+        return "; ".join([self.rev_id_dict[id] for id in ids])
     
     def _make_abbreviation_map(self):
         self.abbrev_dict = {}
