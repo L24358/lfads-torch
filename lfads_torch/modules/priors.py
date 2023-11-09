@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 from torch.distributions import Independent, Normal, StudentT, kl_divergence
+from torch.distributions import MultivariateNormal as FullRankMultivariateNormal
 from torch.distributions.transforms import AffineTransform
 
 
@@ -40,7 +41,7 @@ class MultivariateNormal(nn.Module):
         kl_batch = kl_divergence(posterior, prior)
         return torch.mean(kl_batch)
     
-    def kl_divergence_by_component(self, post_mean, post_std, com_dim):
+    def kl_divergence_by_component(self, post_mean, post_std, com_dim, tpe="mean"):
         post_mean = torch.split(post_mean, com_dim, dim=2)
         post_std = torch.split(post_std, com_dim, dim=2)
         prior_std = torch.split(torch.exp(0.5 * self.logvar), com_dim)
@@ -51,7 +52,10 @@ class MultivariateNormal(nn.Module):
             posterior = self.make_posterior(post_mean[i], post_std[i])
             prior = self.make_posterior(prior_mean[i], prior_std[i])
             
-            kls.append(kl_divergence(posterior, prior).mean().item())
+            if tpe == "mean":
+                kls.append(kl_divergence(posterior, prior).mean().item())
+            elif tpe == "seq":
+                kls.append(kl_divergence(posterior, prior).mean(dim=0))
         return kls
 
 class AutoregressiveMultivariateNormal(nn.Module):
@@ -128,4 +132,17 @@ class MultivariateStudentT(nn.Module):
         log_q = posterior.log_prob(sample)
         log_p = prior.log_prob(sample)
         kl_batch = log_q - log_p
+        return torch.mean(kl_batch)
+
+class FRMultivariateNormal(nn.Module):
+    def __init__(self,):
+        super().__init__()
+
+    def make_dist(self, mean, std):
+        return FullRankMultivariateNormal(mean, std)
+
+    def forward(self, pre_mean, pre_std, post_mean, post_std):
+        prior = self.make_dist(pre_mean, pre_std)
+        posterior = self.make_dist(post_mean, post_std)
+        kl_batch = kl_divergence(posterior, prior)
         return torch.mean(kl_batch)

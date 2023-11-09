@@ -1,7 +1,9 @@
 _target_: lfads_torch.datamodules.MesoMapDataModule
-subject_id: 456774
-session_idx: all
+subject_id: 440959
+session_idx: 3
 area_names:
-    - SMA2,3
-    - FP2,3
+    - MOs5
+    - MOs2/3
+    - VAL
+    - VM
 batch_size: 16

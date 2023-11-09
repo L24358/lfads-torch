@@ -54,7 +54,7 @@ class Brain:
         else: return False, None
     
     def get_name(self, ids):
-        return "; ".join([self.rev_id_dict[id] for id in ids])
+        return "; ".join([self.rev_id_dict[id] + f" ({self.abbrev_dict[self.rev_id_dict[id]]})" for id in ids])
     
     def _make_abbreviation_map(self):
         self.abbrev_dict = {}
@@ -93,7 +93,7 @@ def frate_criterion(frate, thre=0.01): return frate > thre
 if __name__ == "__main__":
     
     # USER DEFINED VARIABLES
-    required_areas = ["Ventral medial nucleus of the thalamus", "Ventral anterior-lateral complex of the thalamus", "Secondary motor area, layer 5", "Secondary motor area, layer 2/3"]
+    required_areas = ["Ventral medial nucleus of the thalamus", "Ventral anterior-lateral complex of the thalamus", "Secondary motor area, layer 5", "Secondary motor area, layer 2/3", "Somatomotor areas", "Midbrain"] # "Pons"
     uniform_level = False
     level = 4 # only required when uniform_level = True
     
@@ -116,6 +116,8 @@ if __name__ == "__main__":
         
         # if targets are in available areas
         areas_in, areas_pass_criterion = [], []
+        num_neurons_list = []
+        
         for target_id in brain.interest_group:
             is_in, sub_area_idxs = brain.is_available(target_id, available_areas) 
             if is_in:
@@ -129,12 +131,14 @@ if __name__ == "__main__":
                     frate.append(row["firing rate mean"])
                 frate = np.dot(np.array(num_neurons), np.array(frate)) / sum(num_neurons)
                 num_neurons = sum(num_neurons)
+                num_neurons_list.append(num_neurons)
                     
                 if num_neurons_criterion(num_neurons) and frate_criterion(frate):
                     areas_pass_criterion.append(target_id)
     
         if len(areas_pass_criterion) == len(brain.interest_group):
             print("Group ", group_name, " satisfied all criteria.")
+            print("The number of neurons are: ", num_neurons_list)
         elif len(areas_in) == len(brain.interest_group):
             print("Group ", group_name, " satisfied the 'available' criterion.")
         

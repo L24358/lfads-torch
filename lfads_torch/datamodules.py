@@ -137,17 +137,26 @@ class SessionAreaDataset(Dataset):
         self.data_list = list(data_dict.values()) # keys: batch index, value: {``area_name``: tensor of shape (time, num neurons)}
         self.info_list = info_list
         self.empty_dict = {key: np.zeros(list(value.shape[:-1]) + [0]) for key, value in self.data_list[0].items()}
+        sv_gen = torch.Generator().manual_seed(hps.sv_seed)
         
     def __getitem__(self, idx):
+        sv_mask = self._make_mask(self.data_list[idx])
         return SessionBatch(
                     encod_data=self.data_list[idx],
                     recon_data=self.data_list[idx],
                     ext_input=self.empty_dict,
                     truth=self.empty_dict,
-                    sv_mask=self.empty_dict, # implement sv_mask elsewhere
+                    sv_mask=sv_mask,
                 ), self.info_list[idx]
     
     def __len__(self): return len(self.data_list)
+
+    def _make_mask(self, encod_data):
+        bern_p = 1 - hps.sv_rate
+        sv_mask = (
+            torch.rand(encod_data.shape, generator=sv_gen) < bern_p
+        ).float()
+        return sv_mask
 
 class BasicDataModule(pl.LightningDataModule):
     def __init__(
@@ -278,7 +287,12 @@ class MesoMapDataModule(pl.LightningDataModule):
             else: session_idxs = [hps.session_idx]
             
             # Only retain sessions according to available keys
-            dataset_names = [f"area-{key}" for key in hps.area_names]
+            area_names_flattened = []
+            for area_name in hps.area_names:
+                if isinstance(area_name, str): area_names_flattened.append(area_name)
+                elif isinstance(area_name, list): area_names_flattened += area_name[1:] # First one is the combined name
+                else: raise TypeError()
+            dataset_names = [f"area-{key}" for key in area_names_flattened]
             session_idxs = [si for si in session_idxs if
                            np.all([dsname in file[session_names[si]].keys() for dsname in dataset_names])]
 
@@ -296,19 +310,36 @@ class MesoMapDataModule(pl.LightningDataModule):
                 info1 = group["trial_instruction"][:][included_batches]
                 info2 = group["outcome"][:][included_batches]
                 info_strings = ["_".join(to_string(info)) for info in zip(info1, info2)]
-
+                        
                 # Turn data into dictionary, then SessionAreaDataset
                 area_data_dict = {}
-                for dataset_name in dataset_names:
-                    area_name = dataset_name.replace("area-", "")
-                    ds = group[dataset_name]
-                    assert ds.attrs.get("type") == "data"
+                for area_name in hps.area_names:
+                    if isinstance(area_name, str):
+                        dataset_name = f"area-{area_name}"
+                        ds = group[dataset_name]
+                        assert ds.attrs.get("type") == "data"
+                        
+                        arr = ds[:][included_batches]
+                        arr = np.swapaxes(arr, 1, 2) # shape = (batch, time, # neurons)
+                        label_area_name = area_name
+                    
+                    elif isinstance(area_name, list):
+                        arrs = []
+                        for sub_area_name in area_name[1:]:
+                            dataset_name = f"area-{sub_area_name}"
+                            ds = group[dataset_name]
+                            assert ds.attrs.get("type") == "data"
 
-                    arr = ds[:][included_batches]
-                    arr = np.swapaxes(arr, 1, 2)
+                            arr = ds[:][included_batches]
+                            arr = np.swapaxes(arr, 1, 2) # shape = (batch, time, # neurons)
+                            arrs.append(arr)
+                        arr = np.concatenate(arrs, axis=2)
+                        label_area_name = area_name[0]
+                        
                     for bi in range(batch_dim):
-                        if dataset_name == dataset_names[0]: area_data_dict[bi] = {}
-                        area_data_dict[bi][area_name] = arr[bi]
+                        if label_area_name == hps.area_names[0]: area_data_dict[bi] = {}
+                        area_data_dict[bi][label_area_name] = arr[bi]
+                        
                 session_dataset = SessionAreaDataset(area_data_dict, info_strings)
                 train_ds, val_ds = random_split(session_dataset, hps.p_split)
                 self.train_session_datasets.append(train_ds)

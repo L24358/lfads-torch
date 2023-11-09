@@ -1,6 +1,6 @@
 defaults:
-  - model: mrlfads_SMA_FP
-  - datamodule: mrlfads_SMA_FP
+  - model: mrlfads_thalamocortical_loop
+  - datamodule: mrlfads_thalamocortical_loop
   - callbacks: mrlfads
   - _self_
   
@@ -24,12 +24,12 @@ callbacks:
     verbose: False
     dirpath: lightning_checkpoints
     auto_insert_metric_name: False
-  early_stopping:
-    _target_: pytorch_lightning.callbacks.EarlyStopping
-    monitor: valid/recon_smth
-    mode: min
-    patience: 200
-    min_delta: 0
+  # early_stopping:
+  #   _target_: pytorch_lightning.callbacks.EarlyStopping
+  #   monitor: valid/recon_smth
+  #   mode: min
+  #   patience: 200
+  #   min_delta: 0
   learning_rate_monitor:
     _target_: pytorch_lightning.callbacks.LearningRateMonitor
     logging_interval: epoch

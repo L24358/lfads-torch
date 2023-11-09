@@ -157,6 +157,72 @@ class CoordinatedDropout:
     def reset(self):
         self.grad_masks = []
         
+class SampleValidation:
+    def __init__(self, sv_rate, ic_enc_seq_len, recon_reduce_mean):
+        self.sv_rate = sv_rate
+        self.ic_enc_seq_len = ic_enc_seq_len
+        self.recon_reduce_mean = recon_reduce_mean
+
+    def process_batch(self, batch):
+        encod_data, *other_data = batch
+        sv_mask = batch[2]
+        # Only use SV where we are inferring rates (none inferred for IC segment)
+        unmaskable_data = encod_data[:, : self.ic_enc_seq_len, :]
+        maskable_data = encod_data[:, self.ic_enc_seq_len :, :]
+        # Set heldout data to zero and scale up heldin data
+        sv_masked_data = maskable_data * sv_mask / (1 - self.sv_rate)
+        # Concatenate the data from the IC encoder segment if using
+        sv_input = torch.cat([unmaskable_data, sv_masked_data], axis=1)
+
+        return sv_input, *other_data
+
+    def process_losses(self, recon_loss, batch, log_fn, data_split):
+        sv_mask = batch[2]
+        # Aggregate and log recon cost for samples heldout for SV
+        if self.sv_rate == 0:
+            # Skip the masking if SV is not being used
+            recon_heldin = recon_loss
+            recon_heldout_agg = torch.tensor(float("nan"))
+        else:
+            # Rescale so means are comparable
+            heldin_mask = sv_mask / (1 - self.sv_rate)
+            heldout_mask = (1 - sv_mask) / self.sv_rate
+            # Apply the heldin mask - expand the mask as necessary
+            heldin_mask = pad_mask(heldin_mask, recon_loss, value=1.0)
+            recon_heldin = recon_loss * heldin_mask
+            # Apply the heldout mask - only include points with encoder input
+            _, t_enc, n_enc = heldout_mask.shape
+            encod_recon_loss = recon_loss[:, :t_enc, :n_enc]
+            recon_heldout_masked = encod_recon_loss * heldout_mask
+            # Aggregate the heldout cost for logging
+            if not self.recon_reduce_mean:
+                recon_heldout_masked = torch.sum(recon_heldout_masked, dim=(1, 2))
+            recon_heldout_agg = torch.mean(recon_heldout_masked)
+        # Log the heldout reconstruction cost
+        log_fn(f"{data_split}/recon/sv", recon_heldout_agg)
+
+        return recon_heldin
+    
+class AreaSampleValidation:
+    def __init__(self, sv_rate, ic_enc_seq_len, recon_reduce_mean):
+        self.sv_rate = sv_rate
+        self.ic_enc_seq_len = ic_enc_seq_len
+        self.recon_reduce_mean = recon_reduce_mean
+
+    def process_batch(self, batch):
+        encod_data, *other_data = batch
+        
+        sv_mask = batch[2]
+        # Only use SV where we are inferring rates (none inferred for IC segment)
+        unmaskable_data = encod_data[:, : self.ic_enc_seq_len, :]
+        maskable_data = encod_data[:, self.ic_enc_seq_len :, :]
+        # Set heldout data to zero and scale up heldin data
+        sv_masked_data = maskable_data * sv_mask / (1 - self.sv_rate)
+        # Concatenate the data from the IC encoder segment if using
+        sv_input = torch.cat([unmaskable_data, sv_masked_data], axis=1)
+
+        return sv_input, *other_data
+        
 class AreaCoordinatedDropout:
     def __init__(self, cd_rate, cd_pass_rate, ic_enc_seq_len):
         self.cd_rate = cd_rate
@@ -261,53 +327,6 @@ class CoordinatedDropoutTF2:
 
     def reset(self):
         self.grad_masks = []
-
-
-class SampleValidation:
-    def __init__(self, sv_rate, ic_enc_seq_len, recon_reduce_mean):
-        self.sv_rate = sv_rate
-        self.ic_enc_seq_len = ic_enc_seq_len
-        self.recon_reduce_mean = recon_reduce_mean
-
-    def process_batch(self, batch):
-        encod_data, *other_data = batch
-        sv_mask = batch[2]
-        # Only use SV where we are inferring rates (none inferred for IC segment)
-        unmaskable_data = encod_data[:, : self.ic_enc_seq_len, :]
-        maskable_data = encod_data[:, self.ic_enc_seq_len :, :]
-        # Set heldout data to zero and scale up heldin data
-        sv_masked_data = maskable_data * sv_mask / (1 - self.sv_rate)
-        # Concatenate the data from the IC encoder segment if using
-        sv_input = torch.cat([unmaskable_data, sv_masked_data], axis=1)
-
-        return sv_input, *other_data
-
-    def process_losses(self, recon_loss, batch, log_fn, data_split):
-        sv_mask = batch[2]
-        # Aggregate and log recon cost for samples heldout for SV
-        if self.sv_rate == 0:
-            # Skip the masking if SV is not being used
-            recon_heldin = recon_loss
-            recon_heldout_agg = torch.tensor(float("nan"))
-        else:
-            # Rescale so means are comparable
-            heldin_mask = sv_mask / (1 - self.sv_rate)
-            heldout_mask = (1 - sv_mask) / self.sv_rate
-            # Apply the heldin mask - expand the mask as necessary
-            heldin_mask = pad_mask(heldin_mask, recon_loss, value=1.0)
-            recon_heldin = recon_loss * heldin_mask
-            # Apply the heldout mask - only include points with encoder input
-            _, t_enc, n_enc = heldout_mask.shape
-            encod_recon_loss = recon_loss[:, :t_enc, :n_enc]
-            recon_heldout_masked = encod_recon_loss * heldout_mask
-            # Aggregate the heldout cost for logging
-            if not self.recon_reduce_mean:
-                recon_heldout_masked = torch.sum(recon_heldout_masked, dim=(1, 2))
-            recon_heldout_agg = torch.mean(recon_heldout_masked)
-        # Log the heldout reconstruction cost
-        log_fn(f"{data_split}/recon/sv", recon_heldout_agg)
-
-        return recon_heldin
 
 
 class SelectiveBackpropThruTime:

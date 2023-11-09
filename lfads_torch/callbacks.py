@@ -286,7 +286,7 @@ class ProctorSummaryPlot:
     def __init__(self, log_every_n_epochs=10):
         self.log_every_n_epochs = log_every_n_epochs
         self.count = 0
-        self.corrs = []
+        self.corrs = {}
         
     def run(self, trainer, pl_module, **kwargs):
         # Check for conditions to not run
@@ -294,6 +294,7 @@ class ProctorSummaryPlot:
             return
         if self.count < 2:
             self.count += 1
+            for area_name in pl_module.areas: self.corrs[area_name] = []
             return
         
         # Access hyperparameters
@@ -335,10 +336,10 @@ class ProctorSummaryPlot:
             avg_rates = true_data.mean(axis=(0,1))
             smoothed_rates = batch_smoothing_func(true_data)
             corrs = batch_corrcoef(smoothed_rates, pred_rates)
-            self.corrs.append(np.mean(corrs))
+            self.corrs[area_name].append(np.mean(corrs))
             
             axes[1][0].plot(log_metrics[f"{area_name}/recon"][1:], label=area_name)
-            axes[1][1].plot(self.corrs[1:], label=area_name)
+            axes[1][1].plot(self.corrs[area_name][1:], label=area_name)
             axes[2][0].plot(log_metrics[f"{area_name}/kl/co"][1:], label=area_name)
             axes[2][1].plot(log_metrics[f"{area_name}/kl/com"][1:], label=area_name)
             axes[3][0].plot(log_metrics[f"{area_name}/l2"][1:], label=area_name)
@@ -413,14 +414,17 @@ class CommunicationPSTHPlot:
             included_batches = cond_indices[ic]
 
             # Iterate through areas and take n_sample neurons
-            for area_name, area in pl_module.areas.items():
+            for ia, (area_name, area) in enumerate(pl_module.areas.items()):
                 hps = area.hparams
+                num_other_areas_name = list(pl_module.areas.keys())
+                num_other_areas_name.pop(ia)
                 inputs = save_var[area_name].inputs.detach().cpu()
                 ci_enc_dim, com_dim, co_dim = hps.ci_enc_dim, hps.com_dim, hps.co_dim
                 _, com, co = torch.split(inputs, [ci_enc_dim, com_dim * hps.num_other_areas, co_dim], dim=2)
                 
                 # Get colors
-                colors = [cmap(x) for x in np.linspace(0, 1, com_dim * hps.num_other_areas)]
+                # colors = [cmap(x) for x in np.linspace(0, 1, com_dim * hps.num_other_areas)]
+                colors = plt.cm.rainbow(np.linspace(0, 1, hps.num_other_areas))
 
                 # Plot co
                 for ico in range(co_dim):
@@ -430,23 +434,43 @@ class CommunicationPSTHPlot:
                 
                 # Plot kl (co)
                 co_mean, co_std = torch.split(save_var[area_name].co_params, [hps.co_dim, hps.co_dim], dim=2)
-                co_kl = area.co_prior.kl_divergence_by_component(co_mean[included_batches], co_std[included_batches])
+                co_kl = area.co_prior.kl_divergence_by_component(co_mean[included_batches], co_std[included_batches], 1, tpe="seq")
                 for jco in range(co_dim):
-                    ax_col[count].plot(co_kl[:, jco])
+                    ax_col[count].plot(co_kl[jco].cpu().detach().numpy())
                 ax_col[count].set_ylabel(f"{area_name}, kl (u)")
                 count += 1
                 
                 # Plot com
-                for icom in range(com_dim * hps.num_other_areas):
-                    ax_col[count].plot(com[included_batches, :, icom].mean(axis=0), color=colors[icom])
+                count_com = 0
+                for icom in range(hps.num_other_areas):
+                    for ii in range(com_dim):
+                        perturbation = np.random.uniform(-0.25, 0.25, size=3)
+                        perturbed_color = np.clip(colors[icom][:3] + perturbation, 0.0, 1.0)
+                        sub_color = (*perturbed_color, (ii + 1) / (com_dim + 1)) # colors[icom] is the group color
+                        if (ii == 0) and (ic == 0):
+                            ax_col[count].plot(com[included_batches, :, count_com].mean(axis=0), color=sub_color, label=f"{num_other_areas_name[icom]}")
+                        else:
+                            ax_col[count].plot(com[included_batches, :, count_com].mean(axis=0), color=sub_color)
+                        count_com += 1
                 ax_col[count].set_ylabel(f"{area_name}, m")
                 count += 1
                 
                 # Plot kl (com)
                 com_mean, com_std = torch.split(save_var[area_name].com_params, [hps.com_dim * hps.num_other_areas, hps.com_dim * hps.num_other_areas], dim=2)
-                com_kl = area.com_prior.kl_divergence_by_component(com_mean[included_batches], com_std[included_batches])
-                for jcom in range(com_dim * hps.num_other_areas):
-                    ax_col[count].plot(com_kl[:, jcom], color=colors[jcom])
+                com_kl = area.com_prior.kl_divergence_by_component(com_mean[included_batches], com_std[included_batches], 1, tpe="seq")
+                count_kl = 0
+                for jcom in range(hps.num_other_areas):
+                    for jj in range(com_dim):
+                        perturbation = np.random.uniform(-0.25, 0.25, size=3)
+                        perturbed_color = np.clip(colors[jcom][:3] + perturbation, 0.0, 1.0)
+                        sub_color = (*perturbed_color, (jj + 1) / (com_dim + 1)) # colors[jcom] is the group color
+                        if (jj == 0) and (ic == 0):
+                            ax_col[count].plot(com_kl[count_kl].cpu().detach().numpy(), color=sub_color, label=f"{num_other_areas_name[icom]}")
+                        else:
+                            ax_col[count].plot(com_kl[count_kl].cpu().detach().numpy(), color=sub_color)
+                        count_kl += 1
+                # for jcom in range(com_dim * hps.num_other_areas):
+                #     ax_col[count].plot(com_kl[jcom].cpu().detach().numpy(), color=colors[jcom])
                 ax_col[count].set_ylabel(f"{area_name}, kl (m)")
                 count += 1
 
