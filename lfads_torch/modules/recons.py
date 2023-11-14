@@ -141,6 +141,10 @@ class Gaussian(Reconstruction):
 
     def compute_means(self, output_params):
         return output_params[..., 0]
+    
+    def compute_loss_main(self, data, output_params):
+        """Performs reshape, then computes loss."""
+        return self.compute_loss(data, self.reshape_output_params(output_params))
 
 
 class Gamma(Reconstruction):

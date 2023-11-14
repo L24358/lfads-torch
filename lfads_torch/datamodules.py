@@ -227,6 +227,64 @@ class MesoMapDataModule(pl.LightningDataModule):
     def get_val_dataloader(self):
         self.setup()
         return self.val_dataloader()
+    
+    
+class SRNN_NCDataModule(pl.LightningDataModule):
+    def __init__(
+        self,
+        batch_size: int = 16,
+        p_split: list = [0.85, 0.15],
+        use_photostim: bool = False,
+        sv_seed: int = 0,
+        sv_rate: float = 0.0,
+    ):
+        super().__init__()
+        self.save_hyperparameters()
+        
+    def setup(self, stage=None):
+        from myle.nav import pklload
+        state_dict = pklload("/root/capsule/data/srnn_2311141941/outputs.pkl")
+        hidden_states, save_var = state_dict["hidden_states"], state_dict["save_var"]
+        
+        area_data_dict = {}
+        ext_input_dict = {}
+        for area_name, arr in hidden_states.items():
+            if area_name == list(hidden_states.keys())[0]:
+                area_data_dict[bi] = {}
+                ext_input_dict[bi] = {}
+            for bi in range(arr.size(0)):
+                area_data_dict[bi][area_name] = arr[bi]
+                ext_input_dict[bi][area_name] = save_var.ext_input[bi]
+                
+        info_strings = [np.zeros(0) for bi in range(hidden_states["source"].size(0))]
+        ext_input_dict = ext_input_dict if self.hparams.use_photostim else {}
+        session_dataset = SessionAreaDataset(area_data_dict, info_strings, self.hparams, ext_input_dict)
+        train_ds, val_ds = random_split(session_dataset, hps.p_split)
+        self.train_session_datasets.append(train_ds)
+        self.val_session_datasets.append(val_ds)
+        
+    def train_dataloader(self, shuffle=True):
+        dataloaders = {
+            i: DataLoader(
+                ds,
+                batch_size=self.hparams.batch_size,
+                shuffle=shuffle,
+                drop_last=False,
+            )
+            for i, ds in enumerate(self.train_session_datasets)
+        }
+        return CombinedLoader(dataloaders, mode="max_size_cycle")
+    
+    def val_dataloader(self):
+        dataloaders = {
+            i: DataLoader(
+                ds,
+                batch_size=len(ds),
+                shuffle=False,
+            )
+            for i, ds in enumerate(self.val_session_datasets)
+        }
+        return CombinedLoader(dataloaders, mode="max_size_cycle")
 
 #===== LFADS code =====#
 

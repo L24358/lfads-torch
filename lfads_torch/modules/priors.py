@@ -28,6 +28,8 @@ class MultivariateNormal(nn.Module):
         self.logvar = nn.Parameter(logvars, requires_grad=True)
 
     def make_posterior(self, post_mean, post_std):
+        post_mean = torch.nan_to_num(post_mean, posinf=1e6, neginf=-1e6)
+        post_std = torch.nan_to_num(post_std, posinf=1e6, neginf=-1e6)
         return Independent(Normal(post_mean, post_std), 1)
 
     def forward(self, post_mean, post_std):

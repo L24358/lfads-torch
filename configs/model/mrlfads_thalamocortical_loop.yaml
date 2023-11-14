@@ -56,14 +56,14 @@ cell_clip: 5.0
 areas_info:
     MOs5:
         # --------- architecture --------- #
-        encod_data_dim: 20
+        encod_data_dim: 29
         ic_enc_dim: 64
         ci_enc_dim: 64
         ci_lag: 1
         con_dim: 64
         co_dim: 4
         ic_dim: 64
-        gen_dim: 200
+        gen_dim: ${eval:${model.areas_info.MOs5.encod_data_dim} * 4}
         fac_dim: ${model.areas_info.MOs5.encod_data_dim}
         com_dim: 4
 
@@ -127,7 +127,7 @@ areas_info:
         con_dim: 32
         co_dim: 4
         ic_dim: 32
-        gen_dim: 100
+        gen_dim: ${eval:${model.areas_info.MOs2/3.encod_data_dim} * 4}
         fac_dim: ${model.areas_info.MOs2/3.encod_data_dim}
         com_dim: 4
         
@@ -191,7 +191,7 @@ areas_info:
         con_dim: 64
         co_dim: 4
         ic_dim: 64
-        gen_dim: 200
+        gen_dim: ${eval:${model.areas_info.VAL.encod_data_dim} * 4}
         fac_dim: ${model.areas_info.VAL.encod_data_dim}
         com_dim: 4
         
@@ -248,14 +248,14 @@ areas_info:
         
     VM:
         # --------- architecture --------- #
-        encod_data_dim: 10
+        encod_data_dim: 14
         ic_enc_dim: 32
         ci_enc_dim: 32
         ci_lag: 1
         con_dim: 32
         co_dim: 4
         ic_dim: 32
-        gen_dim: 100
+        gen_dim: ${eval:${model.areas_info.VM.encod_data_dim} * 4}
         fac_dim: ${model.areas_info.VM.encod_data_dim}
         com_dim: 4
         
