@@ -73,7 +73,6 @@ class MRLFADS(pl.LightningModule):
         self,
         batch: dict,
         sample_posteriors: bool = False,
-        output_means: bool = True, # NotImplemented
     ):
         # Calculate total batch_size
         sessions = sorted(batch.keys())
@@ -86,7 +85,7 @@ class MRLFADS(pl.LightningModule):
         for ia, (area_name, area) in enumerate(self.areas.items()):
 
             # readin --> encoder --> icsampler (controller, generator and factors)
-            encod_data = torch.cat([area.readin[s](batch[s].encod_data[area_name]) for s in sessions])
+            encod_data = torch.cat([area.readin[s](batch[s].encod_data[area_name].float()) for s in sessions])
             ic_mean, ic_std, ci = area.encoder(encod_data.float())
             con_init, gen_init, factor_init = area.icsampler(ic_mean, ic_std, sample_posteriors=sample_posteriors)
             factor_init_split = torch.split(factor_init, batch_sizes, dim=0)
@@ -99,6 +98,7 @@ class MRLFADS(pl.LightningModule):
             factor_state_dict[area_name] = factor_init
             
         # Run decode
+        outputs = []
         for t in range(self.hparams.recon_seq_len - self.hparams.ic_enc_seq_len):
             
             # Initialize new factor_cat tensor dict to store factors from each area
@@ -111,9 +111,13 @@ class MRLFADS(pl.LightningModule):
                 self.save_var[area_name].inputs[:, t, area.hparams.ci_enc_dim:-area.hparams.co_dim] = com_samp
                 self.save_var[area_name].com_params[:,t,:] = com_params
                 
+                # external input
+                ext_input = torch.cat([batch[s].ext_input[area_name] for s in sessions])
+                
                 # decoder
                 states = self.save_var[area_name].states[:,t,:].clone()
                 inputs = self.save_var[area_name].inputs[:,t,:]
+                inputs = torch.cat([inputs, ext_input[:,t,:]], dim=1)
                 new_state, co_params, con_samp = area.decoder(inputs, states, sample_posteriors=sample_posteriors)   
                 self.save_var[area_name].states[:,t+1,:] = new_state
                 self.save_var[area_name].co_params[:,t,:] = co_params
@@ -123,13 +127,17 @@ class MRLFADS(pl.LightningModule):
                 factor_state = new_state[..., -area.hparams.fac_dim:]
                 factor_state_dict_new[area_name] = factor_state
                 factor_state_split = torch.split(factor_state, batch_sizes)
-                rates = torch.cat([area.readout[s](factor_state_split[s]) for s in sessions], dim=0)
-                self.save_var[area_name].outputs[:,t,:] = rates
+                # import pdb; pdb.set_trace()
+                # rates = torch.cat([area.readout[s](factor_state_split[s]) for s in sessions], dim=0)
+                # self.save_var[area_name].outputs[:,t,:] = rates
+                rates = [area.readout[s](factor_state_split[s]) for s in sessions]
+                outputs.append(rates)
+                import pdb; pdb.set_trace()
                 
             # Reset
             factor_state_dict = factor_state_dict_new
                 
-        return self.save_var
+        return outputs
                 
     def _shared_step(self, batch, batch_idx, split):
         hps = self.hparams
@@ -146,10 +154,9 @@ class MRLFADS(pl.LightningModule):
         self.current_batch = batch
         
         # Forward pass
-        self.forward(
+        outputs = self.forward(
             batch,
             sample_posteriors = hps.variational and split == "train",
-            output_means = True,
         )
         
         # Compute ramping coefficients
@@ -163,7 +170,9 @@ class MRLFADS(pl.LightningModule):
         for area_name, area in self.areas.items():
             
             # Compute + process reconstruction loss
-            rates_split = torch.split(self.save_var[area_name].outputs, batch_sizes)
+            # rates_split = torch.split(self.save_var[area_name].outputs, batch_sizes)
+            rates_split = outputs
+            import pdb; pdb.set_trace()
             recon_all = [area.recon[s].compute_loss_main(
                 batch[s].recon_data[area_name][:,recon_start:],
                 rates_split[s])
@@ -179,17 +188,6 @@ class MRLFADS(pl.LightningModule):
             sess_recon = [ra.mean() for ra in recon_all]
             recon = torch.mean(torch.stack(sess_recon))
             mr_recon += recon
-            
-            # Compute r-squared (original code)
-            # r2 = []
-            # for s in sessions:
-            #     area_recon = batch[s].recon_data[area_name][:,recon_start:]
-            #     area_infer = self.save_var[area_name].outputs
-            #     area_base = torch.mean(area_recon.float(), dim=1, keepdim=True).repeat(1, hps.recon_seq_len - hps.ic_enc_seq_len, 1) + 1e-16
-            #     loss_model = area.recon[s].compute_loss_main(area_recon, area_infer)
-            #     loss_null = area.recon[s].compute_loss_main(area_recon, area_base)
-            #     r2.append( (1 - loss_model / loss_null).mean().item() )
-            # r2 = np.mean(r2)
             
             # Compute r-squared using built-in functions
             r2_all = [area.recon[s].compute_pseudo_r2(
@@ -284,7 +282,6 @@ class MRLFADS(pl.LightningModule):
         # return self.forward(
         #     batch=batch,
         #     sample_posteriors=self.hparams.variational and sample_posteriors,
-        #     output_means=True,
         # )
         
     def on_validation_epoch_end(self):

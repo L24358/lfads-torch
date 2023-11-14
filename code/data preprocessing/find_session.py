@@ -93,12 +93,12 @@ def frate_criterion(frate, thre=0.01): return frate > thre
 if __name__ == "__main__":
     
     # USER DEFINED VARIABLES
-    required_areas = ["Ventral medial nucleus of the thalamus", "Ventral anterior-lateral complex of the thalamus", "Secondary motor area, layer 5", "Secondary motor area, layer 2/3", "Somatomotor areas", "Midbrain"] # "Pons"
+    required_areas = ["Ventral medial nucleus of the thalamus", "Ventral anterior-lateral complex of the thalamus", "Secondary motor area, layer 5", "Secondary motor area, layer 2/3"] # "Pons", "Somatomotor areas", "Midbrain"
     uniform_level = False
     level = 4 # only required when uniform_level = True
     
     # Build ccf brain
-    summary_data_path = "/root/capsule/data/chen2023_summary_statistics/"
+    summary_data_path = "/root/capsule/data/chen2023_summary_statistics1/"
     ccf_df = pd.read_excel(summary_data_path + "allen_ccf_v3.xlsx", header=1)
     brain = Brain(ccf_df)
     brain.assign_interest_group(required_areas, data_type="name")
@@ -141,5 +141,6 @@ if __name__ == "__main__":
             print("The number of neurons are: ", num_neurons_list)
         elif len(areas_in) == len(brain.interest_group):
             print("Group ", group_name, " satisfied the 'available' criterion.")
+            print("The number of neurons are: ", num_neurons_list)
         
     
