@@ -68,12 +68,17 @@ areas_info:
         fac_dim: ${model.areas_info.MOs5.encod_data_dim}
         com_dim: 4
 
+        # --------- data --------- #
+        num_neurons:
+          - 29
+          - 38
+
         # --------- readin / readout --------- #
         readin:
           _target_: torch.nn.ModuleList
           modules:
             - _target_: lfads_torch.modules.readin_readout.FanInLinear
-              in_features: 29
+              in_features: ${eval:${model.areas_info.MOs5.num_neurons}[0]}
               out_features: ${model.areas_info.MOs5.encod_data_dim}
             - _target_: lfads_torch.modules.readin_readout.FanInLinear
               in_features: 38

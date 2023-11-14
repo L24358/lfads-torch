@@ -78,7 +78,7 @@ class MRLFADS(pl.LightningModule):
         sessions = sorted(batch.keys())
         batch_sizes = [batch[s].encod_data[self.area_names[0]].size(0) for s in sessions]
         batch_size = sum(batch_sizes)
-        self._build_save_var(batch_size)
+        self._build_save_var(batch_sizes)
         
         # Run encode
         factor_state_dict = {}
@@ -350,9 +350,11 @@ class MRLFADS(pl.LightningModule):
             area_kwargs.update(mr_hps_dict)
             self.areas[area_name] = SRLFADS(area_name, **area_kwargs)
             
-    def _build_save_var(self, batch_size):
+    def _build_save_var(self, batch_sizes):
         self.save_var = {}
+        self.outputs = {}
         fac_dims = []
+        batch_size = sum(batch_sizes)
         target_len = self.hparams.recon_seq_len - self.hparams.ic_enc_seq_len
         num_other_areas = len(self.area_names) - 1 # number of other areas
         for area_name in self.area_names:
@@ -368,6 +370,13 @@ class MRLFADS(pl.LightningModule):
                 com_params = torch.zeros(batch_size, target_len, 2 * hps.com_dim * num_other_areas).to(self.device),   
             )
             fac_dims.append(hps.fac_dim)
+
+            self.outputs[area_name] = []
+            for i_sess in range(len(hps.num_neurons)):
+                self.outputs[area_name].append(
+                torch.zeros(batch_sizes[i_sess], hps.num_neurons[i_sess]).to(self.device)
+                )
+
         self.insert_factor, self.exclude_factor = get_insert_func(fac_dims)
         
     def _compute_ramp(self, start, increase):
@@ -397,7 +406,7 @@ class SRLFADS(nn.Module):
         
         hparam_keys = ["total_fac_dim", "encod_data_dim", "encod_seq_len", "recon_seq_len", "ext_input_dim", "ic_enc_seq_len",
                        "ic_enc_dim", "ci_enc_dim", "ci_lag", "con_dim", "co_dim", "ic_dim", "gen_dim", "fac_dim",
-                       "com_dim", "dropout_rate", "ic_post_var_min", "m_post_var_min", "cell_clip"]
+                       "com_dim", "dropout_rate", "ic_post_var_min", "m_post_var_min", "cell_clip", "num_neurons"]
         hparam_dict = {key: None for key in hparam_keys}
         hparam_dict.update(kwargs)
         self.hparams = HParams(hparam_dict)
@@ -405,7 +414,7 @@ class SRLFADS(nn.Module):
         self.name = area_name
         
         # Make sure the nn.ModuleList arguments are all the same length
-        assert len(readin) == len(readout) == len(reconstruction)
+        assert len(readin) == len(readout)
         # Make sure that non-variational models use null priors
         if not self.hparams.variational:
             assert isinstance(ic_prior, Null) and isinstance(co_prior, Null)
