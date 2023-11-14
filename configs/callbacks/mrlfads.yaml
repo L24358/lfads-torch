@@ -9,6 +9,7 @@ on_epoch_end_calls:
         - "lr-AdamW"
     - _target_: lfads_torch.callbacks.InferredRatesPlot
       log_every_n_epochs: 10
+      plot_first_session: False
     - _target_: lfads_torch.callbacks.PSTHPlot
       log_every_n_epochs: 10
     - _target_: lfads_torch.callbacks.ProctorSummaryPlot

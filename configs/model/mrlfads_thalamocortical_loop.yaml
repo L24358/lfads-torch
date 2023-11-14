@@ -96,10 +96,9 @@ areas_info:
 
         # --------- priors / posteriors --------- #
         reconstruction:
-          - _target_: lfads_torch.modules.recons.Poisson
-          - _target_: lfads_torch.modules.recons.Poisson
+          _target_: lfads_torch.modules.recons.Poisson
         reconstruction_null:
-          - _target_: lfads_torch.modules.recons.PoissonBPS
+          _target_: lfads_torch.modules.recons.PoissonBPS
         co_prior:
           _target_: lfads_torch.modules.priors.MultivariateNormal
           mean: 0
@@ -161,10 +160,9 @@ areas_info:
 
         # --------- priors / posteriors --------- #
         reconstruction:
-          - _target_: lfads_torch.modules.recons.Poisson
-          - _target_: lfads_torch.modules.recons.Poisson
+          _target_: lfads_torch.modules.recons.Poisson
         reconstruction_null:
-          - _target_: lfads_torch.modules.recons.PoissonBPS
+          _target_: lfads_torch.modules.recons.PoissonBPS
         co_prior:
           _target_: lfads_torch.modules.priors.MultivariateNormal
           mean: 0
@@ -226,8 +224,7 @@ areas_info:
 
         # --------- priors / posteriors --------- #
         reconstruction:
-          - _target_: lfads_torch.modules.recons.Poisson
-          - _target_: lfads_torch.modules.recons.Poisson
+          _target_: lfads_torch.modules.recons.Poisson
         reconstruction_null:
           - _target_: lfads_torch.modules.recons.PoissonBPS
         co_prior:
@@ -291,10 +288,9 @@ areas_info:
 
         # --------- priors / posteriors --------- #
         reconstruction:
-          - _target_: lfads_torch.modules.recons.Poisson
-          - _target_: lfads_torch.modules.recons.Poisson
+          _target_: lfads_torch.modules.recons.Poisson
         reconstruction_null:
-          - _target_: lfads_torch.modules.recons.PoissonBPS
+          _target_: lfads_torch.modules.recons.PoissonBPS
         co_prior:
           _target_: lfads_torch.modules.priors.MultivariateNormal
           mean: 0

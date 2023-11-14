@@ -169,7 +169,7 @@ class MRLFADS(pl.LightningModule):
             
             # Compute + process reconstruction loss
             rates_split = self.outputs[area_name]
-            recon_all = [area.recon[s].compute_loss_main(
+            recon_all = [area.recon.compute_loss_main(
                 batch[s].recon_data[area_name][:,recon_start:],
                 rates_split[s])
             for s in sessions]
@@ -186,7 +186,7 @@ class MRLFADS(pl.LightningModule):
             mr_recon += recon
             
             # Compute r-squared using built-in functions
-            r2_all = [area.recon[s].compute_pseudo_r2(
+            r2_all = [area.recon.compute_pseudo_r2(
                 batch[s].recon_data[area_name][:,recon_start:],
                 rates_split[s])
             for s in sessions]
@@ -451,7 +451,7 @@ class LFADS(pl.LightningModule):
         gen_dim: int,
         fac_dim: int,
         dropout_rate: float,
-        reconstruction: nn.ModuleList,
+        reconstruction: nn.Module,
         variational: bool,
         co_prior: nn.Module,
         ic_prior: nn.Module,

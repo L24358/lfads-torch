@@ -55,7 +55,7 @@ def sr_compute_l2_penalty(lfads, hps):
     recurrent_penalty /= recurrent_size + 1e-8
     # Add recon penalty if applicable
     recon_penalty = 0.0
-    for recon in lfads.recon:
-        if hasattr(recon, "compute_l2"):
-            recon_penalty += recon.compute_l2()
+    recon = lfads.recon
+    if hasattr(recon, "compute_l2"):
+        recon_penalty += recon.compute_l2()
     return recurrent_penalty + recon_penalty

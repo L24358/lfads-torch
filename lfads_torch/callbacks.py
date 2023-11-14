@@ -11,7 +11,7 @@ from sklearn.decomposition import PCA
 from scipy.ndimage import gaussian_filter1d
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
-from .utils import send_batch_to_device, common_label, common_col_title
+from .utils import send_batch_to_device, common_label, common_col_title, in_photostim_target
 
 plt.switch_backend("Agg")
 SAVE_DIR = "/root/capsule/results/graphs"
@@ -32,14 +32,13 @@ class OnInitEndCalls(pl.Callback):
         # Common operations
         dataloader = trainer.datamodule.val_dataloader()
         batches = next(iter(dataloader))
-        batches = [batch[0] for batch in batches.values()]
+        batches, info_strings = zip(*batches.values())
         
         # Run functions here
         os.makedirs(SAVE_DIR, exist_ok=True)
         get_maximum_activity_units(trainer, pl_module, batches) 
-        import pdb; pdb.set_trace()
-        get_conditions(trainer, pl_module, batch, info_strings)
-        proctor_preview_plot(trainer, pl_module)
+        get_conditions(trainer, pl_module, batches, info_strings)
+        proctor_preview_plot(trainer, pl_module, batches)
         
         self.ran = True # run only once
 
@@ -56,12 +55,15 @@ class OnEpochEndCalls(pl.Callback):
         self.in_train = in_train
         assert len(in_train) == len(callbacks)
         
+        # Find "Log" callback
+        self.log_idx = np.where([cb.name == "log" for cb in self.callbacks])[0].item()
+        
     def on_train_epoch_end(self, trainer, pl_module):
         # Common operations
         s = 0 # TODO: using the first session only
         batch = pl_module.current_batch[s]
         save_var = pl_module.save_var
-        kwargs = {"batch": batch, "save_var": save_var, "log_metrics": self.callbacks[0].metrics} ## Log needs to be the first callback
+        kwargs = {"batch": batch, "save_var": save_var, "log_metrics": self.callbacks[self.log_idx].metrics}
         
         for i, callback in enumerate(self.callbacks):
             if int(self.in_train[i]):
@@ -72,10 +74,10 @@ class OnEpochEndCalls(pl.Callback):
                                 trainer,
                                 pl_module):
         # Common operations
-        s = 0 # TODO: using the first session only
-        batch = pl_module.current_batch[s]
+        batches = pl_module.current_batch
         save_var = pl_module.save_var
-        kwargs = {"batch": batch, "save_var": save_var, "log_metrics": self.callbacks[0].metrics}
+        outputs = pl_module.outputs
+        kwargs = {"batches": batches, "save_var": save_var, "outputs": outputs, "log_metrics": self.callbacks[self.log_idx].metrics}
         
         for i, callback in enumerate(self.callbacks):
             if not int(self.in_train[i]):
@@ -85,50 +87,10 @@ class OnEpochEndCalls(pl.Callback):
     
 # ===== Classes that are on_validation_epoch_end ===== #
 
-class CalcCorrCoef:
-    def __init__(self,
-                log_every_n_epochs: int = 1):
-        self.log_every_n_epochs = log_every_n_epochs
-        self.smoothing_func = lambda x: gaussian_filter1d(x.astype(float), sigma=10)
-        
-    def run(self, trainer, pl_module, **kwargs):
-        if (trainer.current_epoch % self.log_every_n_epochs) != 0:
-            return
-        
-        # Get variables
-        s = 0 ##
-        batch, save_var = kwargs["batch"], kwargs["save_var"]
-        ic_enc_seq_len = pl_module.hparams.ic_enc_seq_len
-        
-        for area_name, area in pl_module.areas.items():
-            recon_data = batch.recon_data[area_name].detach().cpu().numpy()[:, ic_enc_seq_len:]
-            recon_data = recon_data.reshape(-1, area.hparams.encod_data_dim).T # shape = (neurons, batch * time)
-            infer_data = torch.exp(save_var[area_name].outputs.detach().cpu()).numpy()
-            infer_data = infer_data.reshape(-1, area.hparams.encod_data_dim).T
-            
-            corrs = []
-            for an in area.recon[s].active_neurons:
-                smoothed_data = self.smoothing_func(recon_data[an])
-                corr = np.corrcoef(infer_data[an], smoothed_data)[0][1]
-                corrs.append(corr)
-            area.recon[s].log_corrcoef(torch.Tensor(corrs))
-            
-class FreezeZIPoisson:
-    def __init__(self,
-                log_every_n_epochs: int = 10):
-        self.log_every_n_epochs = log_every_n_epochs
-        
-    def run(self, trainer, pl_module, **kwargs):
-        if (trainer.current_epoch % self.log_every_n_epochs) != 0:
-            return
-        
-        s = 0 ##
-        for area_name, area in pl_module.areas.items():
-            area.recon[s].mask_neurons()
-
 class Log:
     def __init__(self,
                  tags: list = []):
+        self.name = "log"
         self.metrics = defaultdict(list)
         self.tags = tags
     
@@ -157,70 +119,82 @@ class InferredRatesPlot:
     """
     Plots inferred rates with smoothed spiking data.
     """
-    def __init__(self, n_samples=3, n_batches=4, log_every_n_epochs=10):
+    def __init__(self, n_samples=3, n_batches=4, log_every_n_epochs=10, plot_first_session=True):
+        self.name = "inferred_rates_plot"
         self.n_samples = n_samples
         self.n_batches = n_batches
         self.log_every_n_epochs = log_every_n_epochs
         self.smoothing_func = lambda x: gaussian_filter1d(x.astype(float), sigma=10)
+        self.plot_first_session = plot_first_session
 
     def run(self, trainer, pl_module, **kwargs):
         # Check for conditions to not run
         if (trainer.current_epoch % self.log_every_n_epochs) != 0:
             return
-
-        # Get units
-        batch, save_var = kwargs["batch"], kwargs["save_var"]
-        units = pl_module.maximum_activity_units(self.n_samples)
-        ic_enc_seq_len = pl_module.hparams.ic_enc_seq_len
         
-        # Create subplots
-        n_rows, n_cols = len(pl_module.area_names) * self.n_samples, self.n_batches
-        fig, axes = plt.subplots(
-            n_rows,
-            n_cols,
-            sharex=True,
-            sharey="row",
-            figsize=(3 * n_cols, 2 * n_rows),
-        )
-        common_label(fig, "time step", "rates")
-        common_col_title(fig, [f"Batch {i}" for i in range(n_cols)], (n_rows, n_cols))
+        # Get data and session
+        batches, save_var, outputs = kwargs["batches"], kwargs["save_var"], kwargs["outputs"]
+        if self.plot_first_session: sessions = [0]
+        else: sessions = range(len(batches))
         
-        # Iterate through areas and take n_sample neurons
-        s = 0 ## TODO, New
-        count = 0
-        for area_name, area in pl_module.areas.items():
-            recon_data = batch.recon_data[area_name].detach().cpu().numpy()[:, ic_enc_seq_len:]
-            import pdb; pdb.set_trace()
-            infer_data = torch.exp(save_var[area_name].outputs.detach().cpu()).numpy()
-            
-            if area.recon[s].name == "zipoisson":
-                non_zero_prob = 1 - area.recon[s].zero_prob.detach().cpu().numpy()
-            elif area.recon[s].name == "poisson":
-                non_zero_prob = np.ones(infer_data.shape[-1])
+        for s in sessions:
 
-            for jn in units[area_name]:
-                
-                for ib in range(self.n_batches):
-                    axes[count][ib].plot(recon_data[ib, :, jn], "gray", alpha=0.5)
-                    axes[count][ib].plot(infer_data[ib, :, jn] * non_zero_prob[jn], "b")
-                    axes[count][ib].plot(self.smoothing_func(recon_data[ib, :, jn]), "k--")
-                    
-                axes[count][0].set_ylabel(f"area {area_name}, neuron #{jn}")
-                count += 1
+            # Get data
+            batch = batches[s]
+            units = pl_module.maximum_activity_units(s, self.n_samples)
+            ic_enc_seq_len = pl_module.hparams.ic_enc_seq_len
 
-        plt.tight_layout()
-        plt.savefig(f"{SAVE_DIR}/inferred_rates_plot_epoch{trainer.current_epoch}.png")
-        plt.close("all")
+            # Create subplots
+            n_rows, n_cols = len(pl_module.area_names) * self.n_samples, self.n_batches
+            fig, axes = plt.subplots(
+                n_rows,
+                n_cols,
+                sharex=True,
+                sharey="row",
+                figsize=(3 * n_cols, 2 * n_rows),
+            )
+            common_label(fig, "time step", "rates")
+            common_col_title(fig, [f"Batch {i}" for i in range(n_cols)], (n_rows, n_cols))
+
+            # Iterate through areas and take n_sample neurons
+            count = 0
+            for area_name, area in pl_module.areas.items():
+                recon_data = batch.recon_data[area_name].detach().cpu().numpy()[:, ic_enc_seq_len:]
+                if area.recon.name == "poisson":
+                    infer_data = torch.exp(outputs[area_name][s].detach().cpu()).numpy()
+                else:
+                    infer_data = outputs[area_name][s].outputs.detach().cpu().numpy()
+
+                if area.recon.name == "zipoisson":
+                    non_zero_prob = 1 - area.recon.zero_prob.detach().cpu().numpy()
+                elif area.recon.name == "poisson":
+                    non_zero_prob = np.ones(infer_data.shape[-1])
+
+                for jn in units[area_name]:
+
+                    for ib in range(self.n_batches):
+                        axes[count][ib].plot(recon_data[ib, :, jn], "gray", alpha=0.5)
+                        axes[count][ib].plot(infer_data[ib, :, jn] * non_zero_prob[jn], "b")
+                        axes[count][ib].plot(self.smoothing_func(recon_data[ib, :, jn]), "k--")
+
+                    axes[count][0].set_ylabel(f"area {area_name}, neuron #{jn}")
+                    count += 1
+
+            plt.tight_layout()
+            plt.savefig(f"{SAVE_DIR}/inferred_rates_plot_epoch{trainer.current_epoch}_sess{s}.png")
+            plt.close("all")
         return {}
 
 class PSTHPlot:
     """
     Plot PSTH for all areas.
     """
-    def __init__(self, n_samples=3, log_every_n_epochs=10):
+    def __init__(self, n_samples=3, log_every_n_epochs=10, plot_first_session=True):
+        self.name = "psth_plot"
         self.n_samples = n_samples
         self.log_every_n_epochs = log_every_n_epochs
         self.smoothing_func = lambda x: gaussian_filter1d(x.astype(float), sigma=10)
+        self.plot_first_session = plot_first_session
         
     def run(self, trainer, pl_module, **kwargs):
         # Check for conditions to not run
@@ -228,64 +202,72 @@ class PSTHPlot:
             return
         
         # Get data and outputs
-        batch, save_var = kwargs["batch"], kwargs["save_var"]
-        units = pl_module.maximum_activity_units(self.n_samples)
-        categories, cond_indices = pl_module.conditions
-        ic_enc_seq_len = pl_module.hparams.ic_enc_seq_len
-            
-        # Create subplots
-        n_rows, n_cols = len(pl_module.area_names) * self.n_samples, len(categories)
-        fig, axes = plt.subplots(
-            n_rows,
-            n_cols,
-            sharex=True,
-            sharey="row",
-            figsize=(3 * n_cols, 2 * n_rows),
-        )
+        batches, save_var, outputs = kwargs["batches"], kwargs["save_var"], kwargs["outputs"]
+        if self.plot_first_session: sessions = [0]
+        else: sessions = range(len(batches))
+        
+        for s in sessions:
+            batch = batches[s]
+            units = pl_module.maximum_activity_units(s, self.n_samples)
+            categories, cond_indices = pl_module.conditions[s]
+            ic_enc_seq_len = pl_module.hparams.ic_enc_seq_len
 
-        # For each condition (category):
-        s = 0 ## TODO, New
-        for ic, ax_col in enumerate(axes.T):
-            count = 0
-            included_batches = cond_indices[ic]
+            # Create subplots
+            n_rows, n_cols = len(pl_module.area_names) * self.n_samples, len(categories)
+            fig, axes = plt.subplots(
+                n_rows,
+                n_cols,
+                sharex=True,
+                sharey="row",
+                figsize=(3 * n_cols, 2 * n_rows),
+            )
 
-            # Iterate through areas and take n_sample neurons
-            for area_name, area in pl_module.areas.items():
-                recon_data = batch.recon_data[area_name].detach().cpu().numpy()[:, ic_enc_seq_len:]
-                infer_data = torch.exp(save_var[area_name].outputs.detach().cpu()).numpy() # TODO: exp
-                
-                if area.recon[s].name == "zipoisson":
-                    non_zero_prob = 1 - area.recon[s].zero_prob.detach().cpu().numpy()
-                elif area.recon[s].name == "poisson":
-                    non_zero_prob = np.ones(infer_data.shape[-1])
+            # For each condition (category):
+            for ic, ax_col in enumerate(axes.T):
+                count = 0
+                included_batches = cond_indices[ic]
 
-                for jn in units[area_name]:
-                    x_mean = self.smoothing_func(recon_data[included_batches, :, jn].mean(axis=0)) # shape = (T,)
-                    r_mean = infer_data[included_batches, :, jn].mean(axis=0) # shape = (T,)
-                    x_std = self.smoothing_func(recon_data[included_batches, :, jn].std(axis=0)) # shape = (T,)
-                    r_std = infer_data[included_batches, :, jn].std(axis=0) # shape = (T,)
-                    
-                    r_mean *= non_zero_prob[jn]
-                    r_std *= abs(non_zero_prob[jn])
-                    ax_col[count].plot(r_mean, "b")
-                    ax_col[count].plot(x_mean, "k")
-                    ax_col[count].plot(range(len(r_mean)), r_mean, "b")
-                    ax_col[count].plot(range(len(x_mean)), x_mean, "k--")
-                    ax_col[count].fill_between(range(len(r_mean)), r_mean - r_std, r_mean + r_std,
-                                               color="lightblue", alpha=0.5)
-                    ax_col[count].fill_between(range(len(x_mean)), x_mean - x_std, x_mean + x_std,
-                                               color="gray", alpha=0.5)
-                    ax_col[count].set_ylabel(f"{area_name}, neuron #{jn}")
-                    ax_col[count].set_title(categories[ic].replace("_", ", "))
-                    count += 1
+                # Iterate through areas and take n_sample neurons
+                for area_name, area in pl_module.areas.items():
+                    recon_data = batch.recon_data[area_name].detach().cpu().numpy()[:, ic_enc_seq_len:]
+                    if area.recon.name == "poisson":
+                        infer_data = torch.exp(outputs[area_name][s].detach().cpu()).numpy()
+                    else:
+                        infer_data = outputs[area_name][s].outputs.detach().cpu().numpy()
 
-        plt.tight_layout()
-        plt.savefig(f"{SAVE_DIR}/psth_plot_epoch{trainer.current_epoch}.png")
-        plt.close("all")
+                    if area.recon.name == "zipoisson":
+                        non_zero_prob = 1 - area.recon.zero_prob.detach().cpu().numpy()
+                    elif area.recon.name == "poisson":
+                        non_zero_prob = np.ones(infer_data.shape[-1])
+
+                    for jn in units[area_name]:
+                        x_mean = self.smoothing_func(recon_data[included_batches, :, jn].mean(axis=0)) # shape = (T,)
+                        r_mean = infer_data[included_batches, :, jn].mean(axis=0) # shape = (T,)
+                        x_std = self.smoothing_func(recon_data[included_batches, :, jn].std(axis=0)) # shape = (T,)
+                        r_std = infer_data[included_batches, :, jn].std(axis=0) # shape = (T,)
+
+                        r_mean *= non_zero_prob[jn]
+                        r_std *= abs(non_zero_prob[jn])
+                        ax_col[count].plot(r_mean, "b")
+                        ax_col[count].plot(x_mean, "k")
+                        ax_col[count].plot(range(len(r_mean)), r_mean, "b")
+                        ax_col[count].plot(range(len(x_mean)), x_mean, "k--")
+                        ax_col[count].fill_between(range(len(r_mean)), r_mean - r_std, r_mean + r_std,
+                                                   color="lightblue", alpha=0.5)
+                        ax_col[count].fill_between(range(len(x_mean)), x_mean - x_std, x_mean + x_std,
+                                                   color="gray", alpha=0.5)
+                        ax_col[count].set_ylabel(f"{area_name}, neuron #{jn}")
+                        ax_col[count].set_title(categories[ic].replace("_", ", "))
+                        count += 1
+
+            plt.tight_layout()
+            plt.savefig(f"{SAVE_DIR}/psth_plot_epoch{trainer.current_epoch}_sess{s}.png")
+            plt.close("all")
         return {}
 
 class ProctorSummaryPlot:
     def __init__(self, log_every_n_epochs=10):
+        self.name = "proctor_summary_plot"
         self.log_every_n_epochs = log_every_n_epochs
         self.count = 0
         self.corrs = {}
@@ -299,11 +281,14 @@ class ProctorSummaryPlot:
             for area_name in pl_module.areas: self.corrs[area_name] = []
             return
         
+        # Uses just the first session
+        s = 0
+        
         # Access hyperparameters
         hps = pl_module.hparams
         epochs = np.arange(0, trainer.max_epochs)
         log_metrics = kwargs["log_metrics"]
-        batch, save_var = kwargs["batch"], kwargs["save_var"]
+        batches, save_var, outputs = kwargs["batches"], kwargs["save_var"], kwargs["outputs"]
         seq_len = hps.recon_seq_len - hps.ic_enc_seq_len
     
         # Create subplots
@@ -330,11 +315,14 @@ class ProctorSummaryPlot:
         axes[0][1].set_title("KL Coefficient History")
         axes[0][1].legend()
         
-        for ia, area_name in enumerate(pl_module.areas):
+        for ia, (area_name, area) in enumerate(pl_module.areas.items()):
             
             # Compute correlation
-            true_data = batch.recon_data[area_name][:, hps.ic_enc_seq_len:].cpu().detach().numpy()
-            pred_rates = save_var[area_name].outputs.cpu().detach().numpy()
+            true_data = batches[s].recon_data[area_name][:, hps.ic_enc_seq_len:].cpu().detach().numpy()
+            if area.recon.name == "poisson":
+                pred_rates = torch.exp(outputs[area_name][s].cpu().detach()).numpy()
+            else:
+                pred_rates = outputs[area_name][s].cpu().detach().numpy()
             avg_rates = true_data.mean(axis=(0,1))
             smoothed_rates = batch_smoothing_func(true_data)
             corrs = batch_corrcoef(smoothed_rates, pred_rates)
@@ -382,6 +370,7 @@ class CommunicationPSTHPlot:
     Plot Inferred Input and Communication PSTH plots for all areas.
     """
     def __init__(self, log_every_n_epochs=10):
+        self.name = "communication_psth_plot"
         self.log_every_n_epochs = log_every_n_epochs
         self.count = 0
         
@@ -393,12 +382,16 @@ class CommunicationPSTHPlot:
             self.count += 1
             return
         
+        # Use just the first session
+        s = 0
+        
         # Get data and outputs
-        batch, save_var = kwargs["batch"], kwargs["save_var"]
-        categories, cond_indices = pl_module.conditions
+        batches, save_var = kwargs["batches"], kwargs["save_var"]
         log_metrics = kwargs["log_metrics"]
         cmap = sns.color_palette("viridis", as_cmap=True)
-            
+        batch = batches[s]
+        categories, cond_indices = pl_module.conditions[s]
+
         # Create subplots
         n_rows, n_cols = len(pl_module.area_names) * 4, len(categories)
         fig, axes = plt.subplots(
@@ -423,9 +416,8 @@ class CommunicationPSTHPlot:
                 inputs = save_var[area_name].inputs.detach().cpu()
                 ci_enc_dim, com_dim, co_dim = hps.ci_enc_dim, hps.com_dim, hps.co_dim
                 _, com, co = torch.split(inputs, [ci_enc_dim, com_dim * hps.num_other_areas, co_dim], dim=2)
-                
+
                 # Get colors
-                # colors = [cmap(x) for x in np.linspace(0, 1, com_dim * hps.num_other_areas)]
                 colors = plt.cm.rainbow(np.linspace(0, 1, hps.num_other_areas))
 
                 # Plot co
@@ -433,7 +425,7 @@ class CommunicationPSTHPlot:
                     ax_col[count].plot(co[included_batches, :, ico].mean(axis=0))
                 ax_col[count].set_ylabel(f"{area_name}, u")
                 count += 1
-                
+
                 # Plot kl (co)
                 co_mean, co_std = torch.split(save_var[area_name].co_params, [hps.co_dim, hps.co_dim], dim=2)
                 co_kl = area.co_prior.kl_divergence_by_component(co_mean[included_batches], co_std[included_batches], 1, tpe="seq")
@@ -441,7 +433,7 @@ class CommunicationPSTHPlot:
                     ax_col[count].plot(co_kl[jco].cpu().detach().numpy())
                 ax_col[count].set_ylabel(f"{area_name}, kl (u)")
                 count += 1
-                
+
                 # Plot com
                 count_com = 0
                 for icom in range(hps.num_other_areas):
@@ -456,7 +448,7 @@ class CommunicationPSTHPlot:
                         count_com += 1
                 ax_col[count].set_ylabel(f"{area_name}, m")
                 count += 1
-                
+
                 # Plot kl (com)
                 com_mean, com_std = torch.split(save_var[area_name].com_params, [hps.com_dim * hps.num_other_areas, hps.com_dim * hps.num_other_areas], dim=2)
                 com_kl = area.com_prior.kl_divergence_by_component(com_mean[included_batches], com_std[included_batches], 1, tpe="seq")
@@ -471,8 +463,6 @@ class CommunicationPSTHPlot:
                         else:
                             ax_col[count].plot(com_kl[count_kl].cpu().detach().numpy(), color=sub_color)
                         count_kl += 1
-                # for jcom in range(com_dim * hps.num_other_areas):
-                #     ax_col[count].plot(com_kl[jcom].cpu().detach().numpy(), color=colors[jcom])
                 ax_col[count].set_ylabel(f"{area_name}, kl (m)")
                 count += 1
 
@@ -540,26 +530,28 @@ def get_maximum_activity_units(trainer, pl_module, batches):
         session_units.append(units)
     pl_module.maximum_activity_units = lambda s, n_samples: {k: v[:n_samples] for k, v in session_units[s].items()}
     
-def get_conditions(trainer, pl_module, batch, info_strings):
-    categories, inverse_indices = np.unique(info_strings, return_inverse=True)
-    unique_indices = [np.where(inverse_indices == i)[0] for i in range(len(categories))]
-    pl_module.conditions = (categories, unique_indices)
+def get_conditions(trainer, pl_module, batches, info_strings):
+    conditions = []
+    for s in range(len(info_strings)):
+        categories, inverse_indices = np.unique(info_strings[s], return_inverse=True)
+        unique_indices = [np.where(inverse_indices == i)[0] for i in range(len(categories))]
+        conditions.append( (categories, unique_indices) )
+    pl_module.conditions = conditions
         
-def proctor_preview_plot(trainer, pl_module):
+def proctor_preview_plot(trainer, pl_module, batches):
     # Access hyperparameters
     hps = pl_module.hparams
     epochs = np.arange(0, trainer.max_epochs)
 
     # Create subplots
-    n_rows, n_cols = 2, 1
+    n_rows, n_cols = 3, 1
     fig, axes = plt.subplots(
         n_rows,
         n_cols,
-        sharex=True,
+        sharex=False,
         sharey="row",
         figsize=(3 * n_cols, 2 * n_rows),
     )
-    common_label(fig, "epochs", "")
 
     # Plot lowest possible learning rate
     if hps.lr_scheduler:
@@ -570,6 +562,7 @@ def proctor_preview_plot(trainer, pl_module):
         axes[0].hlines(y=lr_init, xmin=0, xmax=epochs[-1], color='k')
         axes[0].set_title(f"Lowest lr: {hps.lr_init}")
     axes[0].set_ylabel("learning rate")
+    axes[0].set_xlabel("epoch")
 
     # Plot KL divergence history
     kl_ramp_u = pl_module.compute_ramp_inner(torch.from_numpy(epochs), hps.kl_start_epoch_u, hps.kl_increase_epoch_u) * hps.kl_co_scale
@@ -577,8 +570,21 @@ def proctor_preview_plot(trainer, pl_module):
     axes[1].plot(kl_ramp_u, "k", label="u")
     axes[1].plot(kl_ramp_m, "b--", label="m")
     axes[1].set_ylabel("KL divergence")
+    axes[1].set_xlabel("epoch")
     axes[1].set_title("KL Divergence History")
     axes[1].legend()
+    
+    # Plot external input
+    for s in range(len(batches)):
+        for area_name in batches[s].ext_input.keys():
+            
+            if in_photostim_target(area_name):
+                arr = batches[s].ext_input[area_name]
+                photostim_batches = np.where(arr.mean(axis=(1,2)) != 0)[0]
+                for b in photostim_batches[:5]: axes[2].plot(arr[b].squeeze())
+    axes[2].set_ylabel("amplitude")
+    axes[2].set_xlabel("time step")
+    axes[2].set_title("External Input")
 
     plt.tight_layout()
     plt.savefig(f"{SAVE_DIR}/proctor_preview.png")

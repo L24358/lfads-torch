@@ -8,15 +8,7 @@ from torch import Tensor
 from torch.utils.data import DataLoader, Dataset, random_split
 from typing import List, Union
 from .tuples import SessionBatch
-from .utils import get_paths
-
-def in_photostim_target(area_names):
-    in_ALM = ["MOs"]
-    if isinstance(area_names, str): area_names = [area_names]
-    for area_name in area_names:
-        for candidate in in_ALM:
-            if candidate in area_name: return True
-    return False
+from .utils import get_paths, in_photostim_target
 
 class SessionAreaDataset(Dataset):
     def __init__(

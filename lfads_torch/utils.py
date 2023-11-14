@@ -6,6 +6,13 @@ from omegaconf import DictConfig
 from typing import List
 from .tuples import SessionBatch
 
+def in_photostim_target(area_names):
+    in_ALM = ["MOs"]
+    if isinstance(area_names, str): area_names = [area_names]
+    for area_name in area_names:
+        for candidate in in_ALM:
+            if candidate in area_name: return True
+    return False
 
 def flatten(dictionary, level=[]):
     """Flattens a dictionary by placing '.' between levels.
