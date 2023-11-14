@@ -31,12 +31,13 @@ class OnInitEndCalls(pl.Callback):
     
         # Common operations
         dataloader = trainer.datamodule.val_dataloader()
-        s = 0 # TODO: only using the first session
-        batch, info_strings = next(iter(dataloader))[s]
+        batches = next(iter(dataloader))
+        batches = [batch[0] for batch in batches.values()]
         
         # Run functions here
         os.makedirs(SAVE_DIR, exist_ok=True)
-        get_maximum_activity_units(trainer, pl_module, batch) 
+        get_maximum_activity_units(trainer, pl_module, batches) 
+        import pdb; pdb.set_trace()
         get_conditions(trainer, pl_module, batch, info_strings)
         proctor_preview_plot(trainer, pl_module)
         
@@ -526,15 +527,18 @@ class ICPCAPlot:
         
 # ===== Functions that are on_init_end ===== #
         
-def get_maximum_activity_units(trainer, pl_module, batch):
-    units = {}
-    for area_name in pl_module.area_names:
-        arr = batch.recon_data[area_name].detach().cpu().numpy() # shape = (B, T, N)
-        arr = arr.reshape(-1, arr.shape[-1]) # shape = (B*T, N)
-        indices = np.flip(np.argsort(arr.mean(0))) # according to mean across batch, time
-        units[area_name] = indices
-    pl_module.maximum_activity_units = lambda n_samples: {k: v[:n_samples] for k, v in units.items()}
-    
+def get_maximum_activity_units(trainer, pl_module, batches):
+    session_units = []
+    for s in range(len(batches)):
+        units = {}
+        batch = batches[s]
+        for area_name in pl_module.area_names:
+            arr = batch.recon_data[area_name].detach().cpu().numpy() # shape = (B, T, N)
+            arr = arr.reshape(-1, arr.shape[-1]) # shape = (B*T, N)
+            indices = np.flip(np.argsort(arr.mean(0))) # according to mean across batch, time
+            units[area_name] = indices
+        session_units.append(units)
+    pl_module.maximum_activity_units = lambda s, n_samples: {k: v[:n_samples] for k, v in session_units[s].items()}
     
 def get_conditions(trainer, pl_module, batch, info_strings):
     categories, inverse_indices = np.unique(info_strings, return_inverse=True)
