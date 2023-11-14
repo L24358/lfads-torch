@@ -33,7 +33,6 @@ SessionOutput = namedtuple(
 class SaveVariables:
     states: torch.Tensor = torch.empty(0)
     inputs: torch.Tensor = torch.empty(0)
-    outputs: torch.Tensor = torch.empty(0)
     ic_params: torch.Tensor = torch.empty(0)
     co_params: torch.Tensor = torch.empty(0)
     com_params: torch.Tensor = torch.empty(0)

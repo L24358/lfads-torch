@@ -189,6 +189,7 @@ class InferredRatesPlot:
         count = 0
         for area_name, area in pl_module.areas.items():
             recon_data = batch.recon_data[area_name].detach().cpu().numpy()[:, ic_enc_seq_len:]
+            import pdb; pdb.set_trace()
             infer_data = torch.exp(save_var[area_name].outputs.detach().cpu()).numpy()
             
             if area.recon[s].name == "zipoisson":

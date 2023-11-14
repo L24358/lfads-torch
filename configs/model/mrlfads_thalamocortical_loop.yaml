@@ -57,7 +57,6 @@ areas_info:
     MOs5:
         # --------- architecture --------- #
         encod_data_dim: 20
-        ext_input_dim: 1
         ic_enc_dim: 64
         ci_enc_dim: 64
         ci_lag: 1
@@ -70,18 +69,19 @@ areas_info:
 
         # --------- data --------- #
         num_neurons:
-          - 29
-          - 38
+          n0: 29
+          n1: 38
+        ext_input_dim: 1
 
         # --------- readin / readout --------- #
         readin:
           _target_: torch.nn.ModuleList
           modules:
             - _target_: lfads_torch.modules.readin_readout.FanInLinear
-              in_features: ${eval:${model.areas_info.MOs5.num_neurons}[0]}
+              in_features: ${model.areas_info.MOs5.num_neurons.n0}
               out_features: ${model.areas_info.MOs5.encod_data_dim}
             - _target_: lfads_torch.modules.readin_readout.FanInLinear
-              in_features: 38
+              in_features: ${model.areas_info.MOs5.num_neurons.n1}
               out_features: ${model.areas_info.MOs5.encod_data_dim}
               
         readout:
@@ -89,10 +89,10 @@ areas_info:
           modules:
             - _target_: lfads_torch.modules.readin_readout.FanInLinear
               in_features: ${model.areas_info.MOs5.fac_dim}
-              out_features: 29
+              out_features: ${model.areas_info.MOs5.num_neurons.n0}
             - _target_: lfads_torch.modules.readin_readout.FanInLinear
               in_features: ${model.areas_info.MOs5.fac_dim}
-              out_features: 38
+              out_features: ${model.areas_info.MOs5.num_neurons.n1}
 
         # --------- priors / posteriors --------- #
         reconstruction:
@@ -122,7 +122,6 @@ areas_info:
     MOs2/3:
         # --------- architecture --------- #
         encod_data_dim: 8
-        ext_input_dim: 1
         ic_enc_dim: 32
         ci_enc_dim: 32
         ci_lag: 1
@@ -132,16 +131,22 @@ areas_info:
         gen_dim: 100
         fac_dim: ${model.areas_info.MOs2/3.encod_data_dim}
         com_dim: 4
+        
+        # --------- data --------- #
+        num_neurons:
+          n0: 13
+          n1: 8
+        ext_input_dim: 1
 
         # --------- readin / readout --------- #
         readin:
           _target_: torch.nn.ModuleList
           modules:
             - _target_: lfads_torch.modules.readin_readout.FanInLinear
-              in_features: 13
+              in_features: ${model.areas_info.MOs2/3.num_neurons.n0}
               out_features: ${model.areas_info.MOs2/3.encod_data_dim}
             - _target_: lfads_torch.modules.readin_readout.FanInLinear
-              in_features: 8
+              in_features: ${model.areas_info.MOs2/3.num_neurons.n1}
               out_features: ${model.areas_info.MOs2/3.encod_data_dim}
               
         readout:
@@ -149,10 +154,10 @@ areas_info:
           modules:
             - _target_: lfads_torch.modules.readin_readout.FanInLinear
               in_features: ${model.areas_info.MOs2/3.fac_dim}
-              out_features: 13
+              out_features: ${model.areas_info.MOs2/3.num_neurons.n0}
             - _target_: lfads_torch.modules.readin_readout.FanInLinear
               in_features: ${model.areas_info.MOs2/3.fac_dim}
-              out_features: 8
+              out_features: ${model.areas_info.MOs2/3.num_neurons.n1}
 
         # --------- priors / posteriors --------- #
         reconstruction:
@@ -182,7 +187,6 @@ areas_info:
     VAL:
         # --------- architecture --------- #
         encod_data_dim: 20
-        ext_input_dim: 1
         ic_enc_dim: 64
         ci_enc_dim: 64
         ci_lag: 1
@@ -192,16 +196,22 @@ areas_info:
         gen_dim: 200
         fac_dim: ${model.areas_info.VAL.encod_data_dim}
         com_dim: 4
+        
+        # --------- data --------- #
+        num_neurons:
+          n0: 47
+          n1: 20
+        ext_input_dim: 1
 
         # --------- readin / readout --------- #
         readin:
           _target_: torch.nn.ModuleList
           modules:
             - _target_: lfads_torch.modules.readin_readout.FanInLinear
-              in_features: 47
+              in_features: ${model.areas_info.VAL.num_neurons.n0}
               out_features: ${model.areas_info.VAL.encod_data_dim}
             - _target_: lfads_torch.modules.readin_readout.FanInLinear
-              in_features: 20
+              in_features: ${model.areas_info.VAL.num_neurons.n1}
               out_features: ${model.areas_info.VAL.encod_data_dim}
               
         readout:
@@ -209,10 +219,10 @@ areas_info:
           modules:
             - _target_: lfads_torch.modules.readin_readout.FanInLinear
               in_features: ${model.areas_info.VAL.fac_dim}
-              out_features: 47
+              out_features: ${model.areas_info.VAL.num_neurons.n0}
             - _target_: lfads_torch.modules.readin_readout.FanInLinear
               in_features: ${model.areas_info.VAL.fac_dim}
-              out_features: 20
+              out_features: ${model.areas_info.VAL.num_neurons.n1}
 
         # --------- priors / posteriors --------- #
         reconstruction:
@@ -242,7 +252,6 @@ areas_info:
     VM:
         # --------- architecture --------- #
         encod_data_dim: 10
-        ext_input_dim: 1
         ic_enc_dim: 32
         ci_enc_dim: 32
         ci_lag: 1
@@ -252,16 +261,22 @@ areas_info:
         gen_dim: 100
         fac_dim: ${model.areas_info.VM.encod_data_dim}
         com_dim: 4
+        
+        # --------- data --------- #
+        num_neurons:
+          n0: 14
+          n1: 16
+        ext_input_dim: 1
 
         # --------- readin / readout --------- #
         readin:
           _target_: torch.nn.ModuleList
           modules:
             - _target_: lfads_torch.modules.readin_readout.FanInLinear
-              in_features: 14
+              in_features: ${model.areas_info.VM.num_neurons.n0}
               out_features: ${model.areas_info.VM.encod_data_dim}
             - _target_: lfads_torch.modules.readin_readout.FanInLinear
-              in_features: 16
+              in_features: ${model.areas_info.VM.num_neurons.n1}
               out_features: ${model.areas_info.VM.encod_data_dim}
               
         readout:
@@ -269,10 +284,10 @@ areas_info:
           modules:
             - _target_: lfads_torch.modules.readin_readout.FanInLinear
               in_features: ${model.areas_info.VM.fac_dim}
-              out_features: 14
+              out_features: ${model.areas_info.VM.num_neurons.n0}
             - _target_: lfads_torch.modules.readin_readout.FanInLinear
               in_features: ${model.areas_info.VM.fac_dim}
-              out_features: 16
+              out_features: ${model.areas_info.VM.num_neurons.n1}
 
         # --------- priors / posteriors --------- #
         reconstruction:

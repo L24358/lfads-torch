@@ -16,7 +16,6 @@ from .modules.priors import Null
 from .tuples import SessionBatch, SessionOutput, SaveVariables
 from .utils import transpose_lists, get_insert_func, HParams
 
-
 class MRLFADS(pl.LightningModule):
     """
     Multi-Regional LFADS.
@@ -127,17 +126,16 @@ class MRLFADS(pl.LightningModule):
                 factor_state = new_state[..., -area.hparams.fac_dim:]
                 factor_state_dict_new[area_name] = factor_state
                 factor_state_split = torch.split(factor_state, batch_sizes)
-                # import pdb; pdb.set_trace()
-                # rates = torch.cat([area.readout[s](factor_state_split[s]) for s in sessions], dim=0)
-                # self.save_var[area_name].outputs[:,t,:] = rates
-                rates = [area.readout[s](factor_state_split[s]) for s in sessions]
-                outputs.append(rates)
-                import pdb; pdb.set_trace()
+                
+                # rates
+                for s in sessions:
+                    rates = area.readout[s](factor_state_split[s])
+                    self.outputs[area_name][s][:,t,:] = rates
                 
             # Reset
             factor_state_dict = factor_state_dict_new
                 
-        return outputs
+        return self.outputs
                 
     def _shared_step(self, batch, batch_idx, split):
         hps = self.hparams
@@ -154,7 +152,7 @@ class MRLFADS(pl.LightningModule):
         self.current_batch = batch
         
         # Forward pass
-        outputs = self.forward(
+        self.forward(
             batch,
             sample_posteriors = hps.variational and split == "train",
         )
@@ -170,9 +168,7 @@ class MRLFADS(pl.LightningModule):
         for area_name, area in self.areas.items():
             
             # Compute + process reconstruction loss
-            # rates_split = torch.split(self.save_var[area_name].outputs, batch_sizes)
-            rates_split = outputs
-            import pdb; pdb.set_trace()
+            rates_split = self.outputs[area_name]
             recon_all = [area.recon[s].compute_loss_main(
                 batch[s].recon_data[area_name][:,recon_start:],
                 rates_split[s])
@@ -363,8 +359,6 @@ class MRLFADS(pl.LightningModule):
                 # states has 1 extra time in the beginning, will be removed in the end
                 states = torch.zeros(batch_size, target_len+1, hps.con_dim + hps.gen_dim + hps.fac_dim).to(self.device),
                 inputs = torch.zeros(batch_size, target_len, hps.ci_enc_dim + hps.com_dim * num_other_areas + hps.co_dim).to(self.device),
-                outputs = torch.zeros(batch_size, target_len, hps.encod_data_dim).to(self.device),
-                
                 ic_params = torch.zeros(batch_size, 2 * hps.ic_dim).to(self.device),
                 co_params = torch.zeros(batch_size, target_len, 2 * hps.co_dim).to(self.device),
                 com_params = torch.zeros(batch_size, target_len, 2 * hps.com_dim * num_other_areas).to(self.device),   
@@ -374,7 +368,7 @@ class MRLFADS(pl.LightningModule):
             self.outputs[area_name] = []
             for i_sess in range(len(hps.num_neurons)):
                 self.outputs[area_name].append(
-                torch.zeros(batch_sizes[i_sess], hps.num_neurons[i_sess]).to(self.device)
+                torch.zeros(batch_sizes[i_sess], target_len, hps.num_neurons[i_sess]).to(self.device)
                 )
 
         self.insert_factor, self.exclude_factor = get_insert_func(fac_dims)
@@ -409,6 +403,7 @@ class SRLFADS(nn.Module):
                        "com_dim", "dropout_rate", "ic_post_var_min", "m_post_var_min", "cell_clip", "num_neurons"]
         hparam_dict = {key: None for key in hparam_keys}
         hparam_dict.update(kwargs)
+        hparam_dict["num_neurons"] = list(hparam_dict["num_neurons"].values())
         self.hparams = HParams(hparam_dict)
         self.hparams.add("co_prior", co_prior)
         self.name = area_name
