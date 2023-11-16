@@ -1,0 +1,7 @@
+_target_: lfads_torch.datamodules.SRNN_NCDataModule
+area_names:
+    - source
+    - relay
+    - target
+batch_size: 16
+use_photostim: False

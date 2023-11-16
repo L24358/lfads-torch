@@ -1,0 +1,47 @@
+defaults:
+  - model: noisy_channel
+  - datamodule: noisy_channel
+  - callbacks: noisy_channel
+  - _self_
+  
+seed: 0
+ignore_warnings: False
+
+trainer:
+  _target_: pytorch_lightning.Trainer
+  gradient_clip_val: 200
+  max_epochs: 1_000
+  log_every_n_steps: 5
+
+callbacks:
+  model_checkpoint:
+    _target_: pytorch_lightning.callbacks.ModelCheckpoint
+    monitor: valid/recon_smth
+    mode: min
+    save_top_k: 1
+    save_last: True
+    verbose: False
+    dirpath: lightning_checkpoints
+    auto_insert_metric_name: False
+  learning_rate_monitor:
+    _target_: pytorch_lightning.callbacks.LearningRateMonitor
+    logging_interval: epoch
+
+logger:
+  tensorboard_logger:
+    _target_: pytorch_lightning.loggers.TensorBoardLogger
+    save_dir: "/results/lfads-torch-example/nlb_mc_maze/231006_exampleSingle" # "."
+    version: ""
+    name: ""
+  csv_logger:
+    _target_: pytorch_lightning.loggers.CSVLogger
+    save_dir: "csv_logs"
+    version: ""
+    name: ""
+
+posterior_sampling:
+  use_best_ckpt: True
+  fn:
+    _target_: lfads_torch.post_run.analysis.run_posterior_sampling
+    filename: lfads_output.h5
+    num_samples: 50

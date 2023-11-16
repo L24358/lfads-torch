@@ -1,0 +1,11 @@
+on_init_end_calls:
+  _target_: lfads_torch.callbacks.OnInitEndCalls
+
+on_epoch_end_calls:
+  _target_: lfads_torch.callbacks.OnEpochEndCalls
+  callbacks:
+    - _target_: lfads_torch.callbacks.InferredRatesPlot
+      log_every_n_epochs: 10
+    - _target_: lfads_torch.callbacks.CommunicationPSTHPlot
+      log_every_n_epochs: 10
+  in_train: "00"
