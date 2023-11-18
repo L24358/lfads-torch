@@ -29,7 +29,7 @@ class MultivariateNormal(nn.Module):
 
     def make_posterior(self, post_mean, post_std):
         post_mean = torch.nan_to_num(post_mean, posinf=1e6, neginf=-1e6)
-        post_std = torch.nan_to_num(post_std, posinf=1e6, neginf=-1e6)
+        post_std = torch.nan_to_num(post_std, posinf=1e6, neginf=-1e6, nan=1e-10)
         return Independent(Normal(post_mean, post_std), 1)
 
     def forward(self, post_mean, post_std):
@@ -38,7 +38,9 @@ class MultivariateNormal(nn.Module):
         posterior = self.make_posterior(post_mean, post_std)
         # Create the prior and posterior
         prior_std = torch.exp(0.5 * self.logvar)
-        prior = Independent(Normal(self.mean, prior_std), 1)
+        prior_mean = torch.nan_to_num(self.mean, posinf=1e6, neginf=-1e6)
+        prior_std = torch.nan_to_num(prior_std, posinf=1e6, neginf=-1e6, nan=1e-10)
+        prior = Independent(Normal(prior_mean, prior_std), 1)
         # Compute KL analytically
         kl_batch = kl_divergence(posterior, prior)
         return torch.mean(kl_batch)
