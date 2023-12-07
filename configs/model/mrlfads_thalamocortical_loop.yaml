@@ -69,8 +69,8 @@ areas_info:
 
         # --------- data --------- #
         num_neurons:
-          n1: 38
-        ext_input_dim: 1
+          n1: 36
+        ext_input_dim: 0
 
         # --------- readin / readout --------- #
         readin:
@@ -127,7 +127,7 @@ areas_info:
         # --------- data --------- #
         num_neurons:
           n1: 8
-        ext_input_dim: 1
+        ext_input_dim: 0
 
         # --------- readin / readout --------- #
         readin:
@@ -183,8 +183,8 @@ areas_info:
         
         # --------- data --------- #
         num_neurons:
-          n1: 20
-        ext_input_dim: 1
+          n1: 43
+        ext_input_dim: 0
 
         # --------- readin / readout --------- #
         readin:
@@ -240,8 +240,8 @@ areas_info:
         
         # --------- data --------- #
         num_neurons:
-          n1: 16
-        ext_input_dim: 1
+          n1: 34
+        ext_input_dim: 0
 
         # --------- readin / readout --------- #
         readin:

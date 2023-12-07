@@ -1,17 +1,19 @@
 import logging
 import os
+import shutil
 import warnings
-from glob import glob
-from pathlib import Path
-
 import hydra
 import pytorch_lightning as pl
 import torch
+from glob import glob
+from pathlib import Path
 from hydra.utils import call, instantiate
+from hydra.core.hydra_config import HydraConfig
 from omegaconf import OmegaConf, open_dict
 from ray import tune
-
 from .utils import flatten
+
+CONFIG_PATH = "/root/capsule/configs/"
 
 OmegaConf.register_new_resolver("relpath", lambda p: Path(__file__).parent / ".." / p)
 OmegaConf.register_new_resolver("eval", eval)
@@ -36,6 +38,24 @@ def run_model(
         version_base="1.1",
     ):
         config = hydra.compose(config_name=config_path.name, overrides=overrides)
+        
+    # Get the config filenames
+    metadata = {}
+    @hydra.main(config_path=CONFIG_PATH, config_name=config_path.name)
+    def get_metadata(config):
+        hydra_cfg = HydraConfig.get()
+        metadata.update( OmegaConf.to_container(hydra_cfg.runtime.choices) )
+    get_metadata()
+    
+    # Make local "config" directory and copy relevant files
+    os.makedirs("./configs")
+    for folder in metadata:
+        if "hydra" not in folder:
+            source_path = os.path.join(CONFIG_PATH, folder, metadata[folder]+".yaml")
+            destination_path = os.path.join(os.path.join(".", "configs", folder))
+            os.makedirs(destination_path)
+            shutil.copy(source_path, destination_path)
+    shutil.copy(os.path.join(CONFIG_PATH, config_path.name), "./configs")
 
     # Avoid flooding the console with output during multi-model runs
     if config.ignore_warnings:

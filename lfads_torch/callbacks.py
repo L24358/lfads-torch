@@ -14,7 +14,7 @@ from tensorboard.backend.event_processing.event_accumulator import EventAccumula
 from .utils import send_batch_to_device, common_label, common_col_title, in_photostim_target
 
 plt.switch_backend("Agg")
-SAVE_DIR = "/root/capsule/results/graphs"
+SAVE_DIR = "./graphs"
     
     
 class OnInitEndCalls(pl.Callback):

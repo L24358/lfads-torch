@@ -4,7 +4,7 @@ defaults:
   - callbacks: mrlfads
   - _self_
   
-seed: 0
+seed: 42
 ignore_warnings: False
 
 trainer:
@@ -37,7 +37,7 @@ callbacks:
 logger:
   tensorboard_logger:
     _target_: pytorch_lightning.loggers.TensorBoardLogger
-    save_dir: "/results/lfads-torch-example/nlb_mc_maze/231006_exampleSingle" # "."
+    save_dir: "."
     version: ""
     name: ""
   csv_logger:
